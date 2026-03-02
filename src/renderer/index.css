@@ -1,0 +1,333 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS Variables for theming */
+:root {
+  --bg-main: #1a1a2e;
+  --bg-secondary: #1e1e2e;
+  --bg-content: #16213e;
+  --bg-card: #2a2a3e;
+  --bg-hover: #3a3a4e;
+  --border-color: #2a2a3e;
+  --text-primary: #f1f5f9;
+  --text-secondary: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-placeholder: #64748b;
+}
+
+html.light {
+  --bg-main: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-content: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-hover: #e2e8f0;
+  --border-color: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #1e293b;
+  --text-muted: #64748b;
+  --text-placeholder: #94a3b8;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-main);
+  color: var(--text-secondary);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* Light theme background overrides - using attribute selectors for reliability */
+html.light [class*="bg-[#1a1a2e]"] { background-color: #f8fafc !important; }
+html.light [class*="bg-[#1e1e2e]"] { background-color: #ffffff !important; }
+html.light [class*="bg-[#16213e]"] { background-color: #f1f5f9 !important; }
+html.light [class*="bg-[#2a2a3e]"] { background-color: #ffffff !important; }
+html.light [class*="bg-[#3a3a4e]"] { background-color: #e2e8f0 !important; }
+
+/* Light theme border overrides */
+html.light [class*="border-[#2a2a3e]"] { border-color: #e2e8f0 !important; }
+html.light [class*="border-[#3a3a4e]"] { border-color: #cbd5e1 !important; }
+html.light [class*="border-gray-800"] { border-color: #e2e8f0 !important; }
+html.light [class*="border-gray-700"] { border-color: #e2e8f0 !important; }
+
+/* Light theme text overrides */
+html.light .text-white { color: #0f172a !important; }
+html.light .text-gray-300 { color: #1e293b !important; }
+html.light .text-gray-400 { color: #64748b !important; }
+html.light .text-gray-500 { color: #94a3b8 !important; }
+
+/* Light theme hover overrides */
+html.light [class*="hover:bg-gray-800"]:hover { background-color: #e2e8f0 !important; }
+html.light [class*="hover:bg-[#2a2a3e]"]:hover { background-color: #e2e8f0 !important; }
+html.light [class*="hover:bg-[#3a3a4e]"]:hover { background-color: #cbd5e1 !important; }
+html.light [class*="hover:text-gray-200"]:hover { color: #0f172a !important; }
+html.light [class*="hover:text-white"]:hover { color: #0f172a !important; }
+
+/* Additional light theme overrides for common dark classes */
+html.light .bg-gray-800 { background-color: #f1f5f9 !important; }
+html.light .bg-gray-900 { background-color: #ffffff !important; }
+html.light .divide-gray-700 > * + * { border-color: #e2e8f0 !important; }
+
+/* Light theme input/form overrides */
+html.light input,
+html.light textarea,
+html.light select {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Light theme card shadows */
+html.light .shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a5e;
+}
+
+:root.light ::-webkit-scrollbar-track {
+  background: var(--bg-content);
+}
+
+:root.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+:root.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+html.light ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+#root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* TipTap Editor Styles */
+.ProseMirror {
+  outline: none;
+  color: #e2e8f0;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: #64748b;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.ProseMirror h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: #f1f5f9;
+}
+
+.ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+  color: #f1f5f9;
+}
+
+.ProseMirror p {
+  margin-bottom: 0.5rem;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.ProseMirror li {
+  margin-bottom: 0.25rem;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid #3b82f6;
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: #cbd5e1;
+  font-style: italic;
+}
+
+.ProseMirror strong {
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+/* Light theme ProseMirror overrides */
+html.light .ProseMirror {
+  color: #1e293b;
+}
+
+html.light .ProseMirror h1,
+html.light .ProseMirror h2 {
+  color: #0f172a;
+}
+
+html.light .ProseMirror strong {
+  color: #0f172a;
+}
+
+html.light .ProseMirror blockquote {
+  color: #475569;
+}
+
+html.light .ProseMirror code {
+  background-color: #f1f5f9;
+  color: #2563eb;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ProseMirror code {
+  background-color: #2a2a3e;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  font-family: 'Courier New', monospace;
+  color: #60a5fa;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.4s ease-out forwards;
+}
+
+/* Stagger animation for lists */
+.stagger-item {
+  opacity: 0;
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.stagger-item:nth-child(1) { animation-delay: 0.05s; }
+.stagger-item:nth-child(2) { animation-delay: 0.1s; }
+.stagger-item:nth-child(3) { animation-delay: 0.15s; }
+.stagger-item:nth-child(4) { animation-delay: 0.2s; }
+.stagger-item:nth-child(5) { animation-delay: 0.25s; }
+.stagger-item:nth-child(n+6) { animation-delay: 0.3s; }

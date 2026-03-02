@@ -1,0 +1,37 @@
+{
+  "appId": "com.workplanner.app",
+  "productName": "Work Planner",
+  "directories": {
+    "output": "C:/Users/elvarghe/Downloads/Planner",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist-main/**/*",
+    "dist-renderer/**/*",
+    "dist-preload/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "node_modules/better-sqlite3",
+      "to": "node_modules/better-sqlite3",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": ["portable"],
+    "signAndEditExecutable": false
+  },
+  "mac": {
+    "target": ["dmg", "zip"],
+    "category": "public.app-category.productivity"
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "Office"
+  },
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/better-sqlite3/**/*"
+  ]
+}
