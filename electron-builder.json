@@ -2,7 +2,7 @@
   "appId": "com.workplanner.app",
   "productName": "Work Planner",
   "directories": {
-    "output": "C:/Users/elvarghe/Downloads/Planner",
+    "output": "release",
     "buildResources": "build"
   },
   "files": [
