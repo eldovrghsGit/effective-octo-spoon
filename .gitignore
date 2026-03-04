@@ -6,6 +6,7 @@ yarn.lock
 # Build outputs
 dist-main/
 dist-renderer/
+dist-web/
 dist-preload/
 release/
 out/

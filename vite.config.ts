@@ -2,19 +2,20 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  base: './',
+  // Use './' for Electron (loads from file system), '/' for web deployment
+  base: mode === 'web' ? '/' : './',
   server: {
     port: 5173,
     strictPort: false,
   },
   build: {
-    outDir: 'dist-renderer',
+    outDir: mode === 'web' ? 'dist-web' : 'dist-renderer',
   },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src/renderer'),
     },
   },
-});
+}));
