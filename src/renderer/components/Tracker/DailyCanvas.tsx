@@ -66,41 +66,49 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
     saveTimer.current = setTimeout(async () => {
       if (!editorRef.current) return;
 
-      // Safety net: sync any todos that have text but no linked task
-      const unlinked = editorRef.current.querySelectorAll('.loop-todo:not([data-task-id])');
-      for (const w of unlinked) {
-        const text = (w.querySelector('.loop-todo-text') as HTMLElement)?.textContent?.trim();
-        const cb = w.querySelector('.loop-todo-cb') as HTMLInputElement;
-        if (text) {
-          const id = await addTaskRef.current({
-            title: text,
-            description: '',
-            status: cb?.checked ? 'done' : 'todo',
-            priority: 'medium',
-            moscow: 'should',
-            due_date: dateStr,
-            start_time: null,
-            end_time: null,
-            tags: null,
-          });
-          if (id) (w as HTMLElement).setAttribute('data-task-id', String(id));
+      try {
+        // Safety net: sync any todos that have text but no linked task
+        const unlinked = editorRef.current.querySelectorAll('.loop-todo:not([data-task-id])');
+        for (const w of unlinked) {
+          const text = (w.querySelector('.loop-todo-text') as HTMLElement)?.textContent?.trim();
+          const cb = w.querySelector('.loop-todo-cb') as HTMLInputElement;
+          if (text) {
+            try {
+              const id = await addTaskRef.current({
+                title: text,
+                description: '',
+                status: cb?.checked ? 'done' : 'todo',
+                priority: 'medium',
+                moscow: 'should',
+                due_date: dateStr,
+                start_time: null,
+                end_time: null,
+                tags: null,
+              });
+              if (id) (w as HTMLElement).setAttribute('data-task-id', String(id));
+            } catch (err) {
+              console.error('Failed to create task from unlinked todo:', err);
+            }
+          }
         }
-      }
 
-      const html = editorRef.current.innerHTML;
-      if (currentNote) {
-        onUpdateNote(currentNote.id, { content: html });
-      } else {
-        onAddNote({
-          title: `Daily – ${format(viewDate, 'MMM d, yyyy')}`,
-          content: html,
-          date: dateStr,
-          note_type: 'daily_planner',
-          is_pinned: false,
-          color: 'default',
-          tags: null,
-          checklist_items: null,
-        } as any);
+        const html = editorRef.current.innerHTML;
+        if (currentNote) {
+          await onUpdateNote(currentNote.id, { content: html });
+        } else {
+          await onAddNote({
+            title: `Daily – ${format(viewDate, 'MMM d, yyyy')}`,
+            content: html,
+            date: dateStr,
+            note_type: 'daily_planner',
+            is_pinned: false,
+            color: 'default',
+            tags: null,
+            checklist_items: null,
+          } as any);
+        }
+      } catch (err) {
+        console.error('Failed to save daily canvas:', err);
       }
     }, 800);
   }, [currentNote, dateStr, viewDate, onAddNote, onUpdateNote]);
@@ -246,7 +254,7 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
         if (content.trim()) {
           createTaskFromTodo(content, checked).then(id => {
             if (id) { todo.setAttribute('data-task-id', String(id)); saveRef.current(); }
-          });
+          }).catch(err => console.error('Failed to create task from todo:', err));
         }
         focusEnd(todo.querySelector('.loop-todo-text') as HTMLElement);
         ensureTrailingP(editorRef.current); save(); return;
@@ -304,7 +312,7 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
           const curCb = todoW.querySelector('.loop-todo-cb') as HTMLInputElement;
           createTaskFromTodo(curText, curCb?.checked ?? false).then(id => {
             if (id) { todoW.setAttribute('data-task-id', String(id)); saveRef.current(); }
-          });
+          }).catch(err => console.error('Failed to create task from todo:', err));
         }
         const nt = makeTodo('', false); todoW.after(nt); wireTodo(nt);
         focusEnd(nt.querySelector('.loop-todo-text') as HTMLElement); save(); return;
@@ -399,7 +407,7 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
       if (text.trim()) {
         createTaskFromTodo(text, false).then(id => {
           if (id) { todo.setAttribute('data-task-id', String(id)); saveRef.current(); }
-        });
+        }).catch(err => console.error('Failed to create task from todo:', err));
       }
       focusEnd(todo.querySelector('.loop-todo-text') as HTMLElement);
     } else if (cmd.tag === 'ul' || cmd.tag === 'ol') {

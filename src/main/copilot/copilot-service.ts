@@ -435,7 +435,7 @@ export async function initCopilot(
     const clientOpts: any = {
       autoStart: true,
       autoRestart: true,
-      logLevel: 'warn',
+      logLevel: 'warning',
     };
 
     if (currentSettings.githubToken) {
@@ -503,11 +503,13 @@ export async function sendMessage(
   let fullResponse = '';
 
   // Set up streaming listener
-  const unsub = session.on('assistant.message_delta', (event: any) => {
-    const delta = event.data?.deltaContent ?? '';
-    if (delta) {
-      fullResponse += delta;
-      onDelta?.(delta);
+  const unsub = session.on((event: any) => {
+    if (event.type === 'assistant.message_delta') {
+      const delta = event.data?.deltaContent ?? '';
+      if (delta) {
+        fullResponse += delta;
+        onDelta?.(delta);
+      }
     }
   });
 

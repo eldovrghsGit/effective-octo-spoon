@@ -305,7 +305,7 @@ const TrackerLayout: React.FC<TrackerLayoutProps> = ({
   return (
     <div ref={containerRef} className={`flex flex-col h-screen ${s.bg} select-none`}>
       {/* ═══ TOP BAR ═══ */}
-      <header className={`h-12 flex items-center justify-between px-5 border-b ${s.border} ${s.panel}`} style={{ WebkitAppRegion: 'drag' } as any}>
+      <header className={`h-12 flex items-center justify-between pl-5 pr-[140px] border-b ${s.border} ${s.panel}`} style={{ WebkitAppRegion: 'drag' } as any}>
         <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-violet-500/20">
             P

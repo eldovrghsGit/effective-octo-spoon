@@ -45,6 +45,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
   const [endTime, setEndTime] = useState('');
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [tags, setTags] = useState<string[]>([]);
+  const { theme } = useTheme();
 
   // Status options for visual indicators
   const statusOptions = [
@@ -193,7 +194,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
   const currentPriority = priorityOptions.find(p => p.value === priority)!;
 
   // Theme
-  const { theme } = useTheme();
   const isLight = theme === 'light';
   
   // Apple-style minimal theme

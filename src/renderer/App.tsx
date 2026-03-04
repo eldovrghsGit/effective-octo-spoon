@@ -169,7 +169,6 @@ function App() {
       }
     }
     await loadTasks();
-    setIsFormOpen(false);
     return result?.id || null;
   };
 
@@ -231,6 +230,8 @@ function App() {
           } else {
             handleAddTask(data as Omit<Task, 'id' | 'created_at' | 'updated_at'>);
           }
+          setIsFormOpen(false);
+          setEditingTask(null);
         }}
         onClose={() => {
           setIsFormOpen(false);
