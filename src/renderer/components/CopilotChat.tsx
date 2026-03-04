@@ -38,11 +38,13 @@ declare global {
       copilot: {
         init: () => Promise<{ isConnected: boolean; isInitialized: boolean; model?: string; error?: string }>;
         send: (prompt: string) => Promise<{ success: boolean; response?: string; error?: string }>;
+        generateContent: (prompt: string) => Promise<{ success: boolean; content?: string; error?: string }>;
         status: () => Promise<{ isConnected: boolean; isInitialized: boolean; error?: string }>;
         stop: () => Promise<{ success: boolean }>;
         getSettings: () => Promise<SafeSettings>;
         updateSettings: (s: any) => Promise<{ isConnected: boolean; isInitialized: boolean; error?: string }>;
         onDelta: (callback: (delta: string) => void) => () => void;
+        onInlineDelta: (callback: (delta: string) => void) => () => void;
       };
       [key: string]: any;
     };

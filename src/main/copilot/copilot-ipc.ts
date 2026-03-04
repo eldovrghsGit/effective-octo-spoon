@@ -57,11 +57,15 @@ export function registerCopilotHandlers(
         lowerPrompt.includes('update') ||
         lowerPrompt.includes('complete') ||
         lowerPrompt.includes('done') ||
-        lowerPrompt.includes('delete')
+        lowerPrompt.includes('delete') ||
+        lowerPrompt.includes('note') ||
+        lowerPrompt.includes('daily') ||
+        lowerPrompt.includes('write')
       ) {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          console.log('🔄 Triggering tasks refresh after AI action');
+          console.log('🔄 Triggering tasks & notes refresh after AI action');
           mainWindow.webContents.send('tasks:refresh');
+          mainWindow.webContents.send('notes:refresh');
         }
       }
 
@@ -69,6 +73,32 @@ export function registerCopilotHandlers(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('❌ Copilot error:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+  });
+
+  // Generate content inline (for / commands in notes — no streaming, just returns text)
+  ipcMain.handle('copilot:generateContent', async (_, prompt: string) => {
+    console.log('✨ Generating inline content:', prompt.substring(0, 50) + '...');
+    const mainWindow = getMainWindow();
+
+    try {
+      const wrappedPrompt = `The user is writing in a daily note and used an inline AI command. Generate ONLY the HTML content to insert — no explanation, no markdown fences, no preamble. Use semantic HTML tags: <h2>, <h3>, <p>, <ul>, <ol>, <li>, <blockquote>, <strong>, <em>. Do NOT wrap in a root element.\n\nUser request: ${prompt}`;
+      const response = await sendMessage(wrappedPrompt, (delta: string) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('copilot:inlineDelta', delta);
+        }
+      });
+
+      // Trigger notes refresh
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('notes:refresh');
+      }
+
+      return { success: true, content: response };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ Copilot inline generation error:', errorMessage);
       return { success: false, error: errorMessage };
     }
   });

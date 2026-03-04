@@ -3,6 +3,7 @@ import {
   ChevronLeft, ChevronRight, Type, CheckSquare,
   Heading1, Heading2, List, ListOrdered, Hash, Quote, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
+  Sparkles, Loader2, Send,
 } from 'lucide-react';
 import { format, addDays, subDays, isToday } from 'date-fns';
 import { Task } from '../../App';
@@ -32,6 +33,7 @@ const slashItems = [
   { id: 'ol',         label: 'Numbered',   icon: ListOrdered, desc: 'Ordered list',     tag: 'ol' },
   { id: 'blockquote', label: 'Quote',      icon: Quote,       desc: 'Block quote',      tag: 'blockquote' },
   { id: 'hr',         label: 'Divider',    icon: Minus,       desc: 'Horizontal line',  tag: 'hr' },
+  { id: 'copilot',    label: 'AI Copilot', icon: Sparkles,    desc: 'Generate with AI', tag: 'copilot' },
 ];
 
 /* ═══════════════════════════════════════════════
@@ -205,6 +207,12 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
 
   /* ── floating toolbar on text selection ── */
   const [toolbar, setToolbar] = useState<{ x: number; y: number } | null>(null);
+
+  /* ── copilot inline prompt state ── */
+  const [copilotPrompt, setCopilotPrompt] = useState<{ show: boolean; anchorEl: HTMLElement | null }>({ show: false, anchorEl: null });
+  const [copilotInput, setCopilotInput] = useState('');
+  const [copilotLoading, setCopilotLoading] = useState(false);
+  const copilotInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const onSel = () => {
@@ -398,6 +406,20 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
     if (!blockEl) return;
     const text = (blockEl.textContent || '').replace(/^\/\S*\s?/, '');
 
+    /* ── Copilot AI command ── */
+    if (cmd.tag === 'copilot') {
+      // Replace the slash text with a placeholder and show the prompt input
+      const placeholder = document.createElement('div');
+      placeholder.className = 'copilot-prompt-anchor';
+      placeholder.setAttribute('data-copilot', 'true');
+      placeholder.innerHTML = '';
+      blockEl.replaceWith(placeholder);
+      setCopilotPrompt({ show: true, anchorEl: placeholder });
+      setCopilotInput('');
+      setTimeout(() => copilotInputRef.current?.focus(), 50);
+      return;
+    }
+
     if (cmd.tag === 'hr') {
       const hr = document.createElement('hr'); const p = mkP();
       blockEl.replaceWith(hr); hr.after(p); focusEnd(p);
@@ -416,6 +438,64 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
       replaceBlock(blockEl, cmd.tag, text);
     }
     ensureTrailingP(editorRef.current); save();
+  };
+
+  /* ── copilot inline content generation ── */
+  const handleCopilotSubmit = async () => {
+    if (!copilotInput.trim() || copilotLoading) return;
+    setCopilotLoading(true);
+
+    try {
+      const result = await window.electronAPI.copilot.generateContent(copilotInput.trim());
+
+      if (result.success && result.content && copilotPrompt.anchorEl) {
+        // Clean up the response: strip markdown fences if the model wraps in ```html
+        let html = result.content
+          .replace(/^```html?\n?/i, '')
+          .replace(/\n?```$/i, '')
+          .trim();
+
+        // Insert the generated HTML at the anchor position
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        // Insert each child node after the anchor, then remove the anchor
+        const anchor = copilotPrompt.anchorEl;
+        const parent = anchor.parentElement;
+        if (parent) {
+          const frag = document.createDocumentFragment();
+          while (container.firstChild) frag.appendChild(container.firstChild);
+          anchor.replaceWith(frag);
+          // Wire any todos that were generated
+          if (editorRef.current) wireAllTodos(editorRef.current, wireTodo);
+          ensureTrailingP(editorRef.current!);
+          save();
+        }
+      }
+    } catch (err) {
+      // On error, replace the anchor with an error paragraph
+      if (copilotPrompt.anchorEl) {
+        const p = document.createElement('p');
+        p.textContent = '⚠ Copilot generation failed. Please try again.';
+        copilotPrompt.anchorEl.replaceWith(p);
+      }
+    } finally {
+      setCopilotLoading(false);
+      setCopilotPrompt({ show: false, anchorEl: null });
+      setCopilotInput('');
+    }
+  };
+
+  const handleCopilotCancel = () => {
+    // Remove the placeholder and restore an empty paragraph
+    if (copilotPrompt.anchorEl) {
+      const p = mkP();
+      copilotPrompt.anchorEl.replaceWith(p);
+      focusEnd(p);
+    }
+    setCopilotPrompt({ show: false, anchorEl: null });
+    setCopilotInput('');
+    setCopilotLoading(false);
   };
 
   /* ── date navigation ── */
@@ -521,6 +601,91 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Copilot inline prompt */}
+      {copilotPrompt.show && (
+        <div
+          className={`fixed z-50 rounded-xl border shadow-2xl p-4 w-96 ${
+            isDark ? 'bg-[#1a1a30] border-white/10 shadow-black/50' : 'bg-white border-gray-200 shadow-gray-200/50'
+          }`}
+          style={{
+            left: copilotPrompt.anchorEl
+              ? Math.min(copilotPrompt.anchorEl.getBoundingClientRect().left, window.innerWidth - 420)
+              : '50%',
+            top: copilotPrompt.anchorEl
+              ? copilotPrompt.anchorEl.getBoundingClientRect().top - 10
+              : '50%',
+            transform: copilotPrompt.anchorEl ? undefined : 'translate(-50%, -50%)',
+          }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center">
+              <Sparkles className="w-3.5 h-3.5 text-white" />
+            </div>
+            <span className={`text-sm font-semibold ${isDark ? 'text-slate-200' : 'text-gray-800'}`}>
+              AI Copilot
+            </span>
+            {copilotLoading && (
+              <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin ml-auto" />
+            )}
+          </div>
+          <div className={`flex gap-2 items-center rounded-lg border px-3 py-2 ${
+            isDark ? 'bg-white/[0.05] border-white/[0.08]' : 'bg-gray-50 border-gray-200'
+          }`}>
+            <input
+              ref={copilotInputRef}
+              type="text"
+              value={copilotInput}
+              onChange={e => setCopilotInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCopilotSubmit(); }
+                if (e.key === 'Escape') handleCopilotCancel();
+              }}
+              placeholder="Ask AI to generate content…"
+              className={`flex-1 bg-transparent text-sm outline-none ${
+                isDark ? 'text-slate-200 placeholder-slate-500' : 'text-gray-800 placeholder-gray-400'
+              }`}
+              disabled={copilotLoading}
+            />
+            <button
+              onClick={handleCopilotSubmit}
+              disabled={!copilotInput.trim() || copilotLoading}
+              className="flex-shrink-0 w-7 h-7 rounded-lg bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center transition-colors disabled:opacity-40"
+            >
+              {copilotLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+          <div className={`flex items-center justify-between mt-2`}>
+            <div className={`flex flex-wrap gap-1.5`}>
+              {[
+                { label: 'Summarize today', prompt: 'Summarize my tasks and activity for today as a brief daily note recap' },
+                { label: 'Meeting notes', prompt: 'Create a meeting notes template with date, attendees, agenda, notes, and action items sections' },
+                { label: 'Brainstorm', prompt: 'Help me brainstorm ideas — create a structured brainstorming section with categories' },
+              ].map(chip => (
+                <button
+                  key={chip.label}
+                  onClick={() => { setCopilotInput(chip.prompt); }}
+                  disabled={copilotLoading}
+                  className={`text-[10px] px-2 py-1 rounded-md transition-colors ${
+                    isDark ? 'bg-white/[0.06] hover:bg-white/[0.10] text-slate-400' : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                  } disabled:opacity-40`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={handleCopilotCancel}
+              className={`text-[10px] px-2 py-1 rounded-md transition-colors ${
+                isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>

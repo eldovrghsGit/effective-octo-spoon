@@ -282,9 +282,11 @@ export const browserElectronAPI = {
   copilot: {
     init: async () => ({ isConnected: false, isInitialized: false }),
     send: async (_prompt: string) => ({ success: false, response: 'Copilot is not available in browser mode.' }),
+    generateContent: async (_prompt: string) => ({ success: false, error: 'Copilot is not available in browser mode.' }),
     status: async () => ({ isConnected: false, isInitialized: false }),
     stop: async () => ({ success: true }),
     onDelta: (_callback: (delta: string) => void) => () => {},
+    onInlineDelta: (_callback: (delta: string) => void) => () => {},
     getSettings: async () => ({ provider: 'github', model: 'gpt-4o', hasApiKey: false, hasGithubToken: false }),
     updateSettings: async (_settings: any) => ({ isConnected: false, isInitialized: false }),
   },

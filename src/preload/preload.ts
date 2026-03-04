@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copilot: {
     init: () => ipcRenderer.invoke('copilot:init'),
     send: (prompt: string) => ipcRenderer.invoke('copilot:send', prompt),
+    generateContent: (prompt: string) => ipcRenderer.invoke('copilot:generateContent', prompt),
     status: () => ipcRenderer.invoke('copilot:status'),
     stop: () => ipcRenderer.invoke('copilot:stop'),
     getSettings: () => ipcRenderer.invoke('copilot:getSettings'),
@@ -81,6 +82,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event: any, delta: string) => callback(delta);
       ipcRenderer.on('copilot:delta', handler);
       return () => ipcRenderer.removeListener('copilot:delta', handler);
+    },
+    onInlineDelta: (callback: (delta: string) => void) => {
+      const handler = (_event: any, delta: string) => callback(delta);
+      ipcRenderer.on('copilot:inlineDelta', handler);
+      return () => ipcRenderer.removeListener('copilot:inlineDelta', handler);
     },
   },
   

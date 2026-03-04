@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Calendar, FileText, Search, Tag as TagIcon, Pin, Trash2, Square, Check, CheckSquare, Type, Heading1, Heading2, List, ListOrdered, ListPlus, X, Clock, Flag, Archive, Sparkles } from 'lucide-react';
+import { Plus, Calendar, FileText, Search, Tag as TagIcon, Pin, Trash2, Square, Check, CheckSquare, Type, Heading1, Heading2, List, ListOrdered, ListPlus, X, Clock, Flag, Archive, Sparkles, Loader2, Send } from 'lucide-react';
 import { Note, ChecklistItem } from '../../types/notes';
 import { Task } from '../../App';
 import NotesSidebar from './NotesSidebar';
@@ -26,6 +26,18 @@ interface ContentBlock {
   taskId?: number | null;
 }
 
+// Helper to map HTML tag names to ContentBlock types
+function htmlTagToBlockType(tagName: string): ContentBlock['type'] {
+  switch (tagName.toUpperCase()) {
+    case 'H1': return 'h1';
+    case 'H2': return 'h2';
+    case 'H3': return 'h3';
+    case 'UL': case 'LI': return 'bullet';
+    case 'OL': return 'numbered';
+    default: return 'text';
+  }
+}
+
 // Slash command menu options
 const slashCommands = [
   { id: 'text', label: 'Text', icon: Type, description: 'Plain text block' },
@@ -34,6 +46,7 @@ const slashCommands = [
   { id: 'h2', label: 'Heading 2', icon: Heading2, description: 'Medium heading' },
   { id: 'bullet', label: 'Bullet List', icon: List, description: 'Bulleted list item' },
   { id: 'numbered', label: 'Numbered List', icon: ListOrdered, description: 'Numbered list item' },
+  { id: 'copilot', label: 'AI Copilot', icon: Sparkles, description: 'Generate content with AI' },
 ];
 
 // Editable block component that manages its own content without parent re-renders
@@ -350,6 +363,12 @@ const NoteContentView: React.FC<{
   const lastSelectedBlockId = useRef<string | null>(null);
   const isTypingRef = useRef(false);
   const [showExistingTaskPicker, setShowExistingTaskPicker] = useState(false);
+
+  // Copilot inline prompt state
+  const [copilotPrompt, setCopilotPrompt] = useState<{ show: boolean; blockId: string | null }>({ show: false, blockId: null });
+  const [copilotInput, setCopilotInput] = useState('');
+  const [copilotLoading, setCopilotLoading] = useState(false);
+  const copilotInputRef = useRef<HTMLInputElement>(null);
 
   // Compute already-linked task IDs from TODAY'S section only (not the entire note)
   const alreadyLinkedTaskIds = useMemo(() => {
@@ -1026,6 +1045,23 @@ const NoteContentView: React.FC<{
   // Apply slash command
   const applySlashCommand = (commandId: string) => {
     if (slashMenuBlockId) {
+      // Handle Copilot command specially
+      if (commandId === 'copilot') {
+        // Clear the slash text from the block
+        const blockEl = blockRefs.current[slashMenuBlockId];
+        if (blockEl) {
+          blockEl.innerText = '';
+        }
+        updateBlock(slashMenuBlockId, { content: '', type: 'text' });
+        setShowSlashMenu(false);
+        setSlashStartPos(null);
+        setCopilotPrompt({ show: true, blockId: slashMenuBlockId });
+        setCopilotInput('');
+        setSlashMenuBlockId(null);
+        setTimeout(() => copilotInputRef.current?.focus(), 50);
+        return;
+      }
+
       // Get the current content and remove the /command part
       const blockEl = blockRefs.current[slashMenuBlockId];
       const currentContent = blockEl?.innerText || '';
@@ -1062,6 +1098,79 @@ const NoteContentView: React.FC<{
     cmd.label.toLowerCase().includes(slashFilter.toLowerCase())
   );
 
+  // Copilot inline content generation
+  const handleCopilotSubmit = async () => {
+    if (!copilotInput.trim() || copilotLoading || !copilotPrompt.blockId) return;
+    setCopilotLoading(true);
+
+    try {
+      const result = await window.electronAPI.copilot.generateContent(copilotInput.trim());
+
+      if (result.success && result.content) {
+        // Clean up the response
+        let text = result.content
+          .replace(/^```html?\n?/i, '')
+          .replace(/\n?```$/i, '')
+          .trim();
+
+        // Strip HTML tags for block-based content (convert to plain text)
+        const plainText = text.replace(/<[^>]*>/g, '').trim();
+
+        // Insert the generated content into the current block
+        updateBlock(copilotPrompt.blockId, { content: plainText });
+
+        // Also try to create additional blocks from structured content
+        // Parse HTML and create blocks for each element
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = text;
+        const children = Array.from(tempDiv.children);
+
+        if (children.length > 1) {
+          // Multi-block content: update first block, add remaining as new blocks
+          const firstChild = children[0];
+          const firstType = htmlTagToBlockType(firstChild.tagName);
+          const firstContent = firstChild.textContent?.trim() || '';
+          updateBlock(copilotPrompt.blockId, { content: firstContent, type: firstType });
+
+          // Add remaining blocks after the current one
+          const currentIdx = blocks.findIndex(b => b.id === copilotPrompt.blockId);
+          const newBlocks: ContentBlock[] = children.slice(1).map(child => ({
+            id: `block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: htmlTagToBlockType(child.tagName),
+            content: child.textContent?.trim() || '',
+          }));
+
+          setBlocks(prev => {
+            const updated = [...prev];
+            updated.splice(currentIdx + 1, 0, ...newBlocks);
+            return updated;
+          });
+        } else if (children.length === 1) {
+          const child = children[0];
+          updateBlock(copilotPrompt.blockId, {
+            content: child.textContent?.trim() || '',
+            type: htmlTagToBlockType(child.tagName),
+          });
+        }
+      }
+    } catch (err) {
+      updateBlock(copilotPrompt.blockId, { content: '⚠ Copilot generation failed. Please try again.' });
+    } finally {
+      setCopilotLoading(false);
+      setCopilotPrompt({ show: false, blockId: null });
+      setCopilotInput('');
+    }
+  };
+
+  const handleCopilotCancel = () => {
+    setCopilotPrompt({ show: false, blockId: null });
+    setCopilotInput('');
+    setCopilotLoading(false);
+    // Refocus the block
+    if (copilotPrompt.blockId) {
+      setTimeout(() => blockRefs.current[copilotPrompt.blockId!]?.focus(), 0);
+    }
+  };
   // Render block based on type
   const renderBlock = (block: ContentBlock, index: number) => {
     const placeholder = getPlaceholder(block.type, block.id);
@@ -1620,6 +1729,94 @@ const NoteContentView: React.FC<{
         alreadyLinkedTaskIds={alreadyLinkedTaskIds}
         onAddTasks={handleAddExistingTasks}
       />
+
+      {/* Copilot inline prompt */}
+      {copilotPrompt.show && (
+        <div
+          className={`fixed z-50 rounded-xl border shadow-2xl p-4 w-96 ${
+            isDark ? 'bg-slate-800 border-slate-700 shadow-black/50' : 'bg-white border-gray-200 shadow-gray-200/50'
+          }`}
+          style={{
+            left: copilotPrompt.blockId && blockRefs.current[copilotPrompt.blockId]
+              ? Math.min(
+                  blockRefs.current[copilotPrompt.blockId]!.getBoundingClientRect().left,
+                  window.innerWidth - 420
+                )
+              : '50%',
+            top: copilotPrompt.blockId && blockRefs.current[copilotPrompt.blockId]
+              ? blockRefs.current[copilotPrompt.blockId]!.getBoundingClientRect().top
+              : '50%',
+            transform: (copilotPrompt.blockId && blockRefs.current[copilotPrompt.blockId]) ? undefined : 'translate(-50%, -50%)',
+          }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center">
+              <Sparkles className="w-3.5 h-3.5 text-white" />
+            </div>
+            <span className={`text-sm font-semibold ${isDark ? 'text-slate-200' : 'text-gray-800'}`}>
+              AI Copilot
+            </span>
+            {copilotLoading && (
+              <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin ml-auto" />
+            )}
+          </div>
+          <div className={`flex gap-2 items-center rounded-lg border px-3 py-2 ${
+            isDark ? 'bg-slate-900/50 border-slate-600' : 'bg-gray-50 border-gray-200'
+          }`}>
+            <input
+              ref={copilotInputRef}
+              type="text"
+              value={copilotInput}
+              onChange={e => setCopilotInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCopilotSubmit(); }
+                if (e.key === 'Escape') handleCopilotCancel();
+              }}
+              placeholder="Ask AI to generate content…"
+              className={`flex-1 bg-transparent text-sm outline-none ${
+                isDark ? 'text-slate-200 placeholder-slate-500' : 'text-gray-800 placeholder-gray-400'
+              }`}
+              disabled={copilotLoading}
+            />
+            <button
+              onClick={handleCopilotSubmit}
+              disabled={!copilotInput.trim() || copilotLoading}
+              className="flex-shrink-0 w-7 h-7 rounded-lg bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center transition-colors disabled:opacity-40"
+            >
+              {copilotLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { label: 'Summarize today', prompt: 'Summarize my tasks and activity for today as a brief daily note recap' },
+                { label: 'Meeting notes', prompt: 'Create a meeting notes template with date, attendees, agenda, notes, and action items sections' },
+                { label: 'Brainstorm', prompt: 'Help me brainstorm ideas — create a structured brainstorming section' },
+              ].map(chip => (
+                <button
+                  key={chip.label}
+                  onClick={() => setCopilotInput(chip.prompt)}
+                  disabled={copilotLoading}
+                  className={`text-[10px] px-2 py-1 rounded-md transition-colors ${
+                    isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-400' : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                  } disabled:opacity-40`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={handleCopilotCancel}
+              className={`text-[10px] px-2 py-1 rounded-md transition-colors ${
+                isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

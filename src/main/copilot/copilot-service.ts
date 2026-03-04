@@ -261,6 +261,62 @@ function getAppTools() {
       },
     }),
 
+    defineTool('write_daily_note', {
+      description:
+        'Write or replace the content of a daily note for a specific date. The content should be valid HTML (paragraphs, headings, lists, etc). If no daily note exists for the date, one will be created.',
+      parameters: z.object({
+        date: z.string().describe('Date in YYYY-MM-DD format. Use today\'s date if not specified.'),
+        content: z.string().describe('HTML content to write into the daily note. Use semantic HTML: <h2>, <p>, <ul><li>...</li></ul>, <ol>, <blockquote>, etc.'),
+        title: z.string().optional().describe('Optional title for the note. Defaults to "Daily – <date>".'),
+      }),
+      handler: async ({ date, content, title }) => {
+        const existing = db!.prepare(
+          "SELECT * FROM notes WHERE date = ? AND note_type = 'daily_planner'",
+        ).get(date) as any;
+
+        if (existing) {
+          db!.prepare(
+            "UPDATE notes SET content = ?, title = ?, updated_at = datetime('now') WHERE id = ?",
+          ).run(content, title ?? existing.title, existing.id);
+          return JSON.stringify({ action: 'updated', id: existing.id, date });
+        } else {
+          const result = db!.prepare(
+            `INSERT INTO notes (title, content, date, note_type, is_pinned, color)
+             VALUES (?, ?, ?, 'daily_planner', 0, 'default')`,
+          ).run(title ?? `Daily – ${date}`, content, date);
+          return JSON.stringify({ action: 'created', id: result.lastInsertRowid, date });
+        }
+      },
+    }),
+
+    defineTool('append_to_daily_note', {
+      description:
+        'Append HTML content to an existing daily note (or create one with the content). Use this when the user asks to add something to today\'s note without overwriting existing content.',
+      parameters: z.object({
+        date: z.string().describe('Date in YYYY-MM-DD format.'),
+        content: z.string().describe('HTML content to append. Use semantic HTML tags.'),
+      }),
+      handler: async ({ date, content }) => {
+        const existing = db!.prepare(
+          "SELECT * FROM notes WHERE date = ? AND note_type = 'daily_planner'",
+        ).get(date) as any;
+
+        if (existing) {
+          const updated = (existing.content || '') + '\n' + content;
+          db!.prepare(
+            "UPDATE notes SET content = ?, updated_at = datetime('now') WHERE id = ?",
+          ).run(updated, existing.id);
+          return JSON.stringify({ action: 'appended', id: existing.id, date });
+        } else {
+          const result = db!.prepare(
+            `INSERT INTO notes (title, content, date, note_type, is_pinned, color)
+             VALUES (?, ?, ?, 'daily_planner', 0, 'default')`,
+          ).run(`Daily – ${date}`, content, date);
+          return JSON.stringify({ action: 'created', id: result.lastInsertRowid, date });
+        }
+      },
+    }),
+
     defineTool('get_weekly_plan', {
       description: 'Get the current or a specific weekly plan.',
       parameters: z.object({
@@ -376,10 +432,14 @@ You have access to tools that read and write the user's data:
 - get_journal_entries — journal/mood entries
 - get_time_sessions — Pomodoro/focus session data
 - get_notes — user's notes
+- write_daily_note — create or replace a daily note's HTML content
+- append_to_daily_note — append HTML content to a daily note without overwriting
 - get_weekly_plan — weekly planning data
 - get_productivity_summary — aggregate stats
 
 Always use these tools to answer questions about the user's data rather than guessing.
+When asked to write into a daily note, use write_daily_note or append_to_daily_note.
+Produce well-structured HTML: use <h2> for section headings, <p> for paragraphs, <ul>/<ol> for lists, <blockquote> for quotes.
 </capabilities>
 
 <guidelines>
