@@ -75,6 +75,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     send: (prompt: string) => ipcRenderer.invoke('copilot:send', prompt),
     status: () => ipcRenderer.invoke('copilot:status'),
     stop: () => ipcRenderer.invoke('copilot:stop'),
+    getSettings: () => ipcRenderer.invoke('copilot:getSettings'),
+    updateSettings: (settings: any) => ipcRenderer.invoke('copilot:updateSettings', settings),
     onDelta: (callback: (delta: string) => void) => {
       const handler = (_event: any, delta: string) => callback(delta);
       ipcRenderer.on('copilot:delta', handler);

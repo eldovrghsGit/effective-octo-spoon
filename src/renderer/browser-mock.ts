@@ -285,6 +285,8 @@ export const browserElectronAPI = {
     status: async () => ({ isConnected: false, isInitialized: false }),
     stop: async () => ({ success: true }),
     onDelta: (_callback: (delta: string) => void) => () => {},
+    getSettings: async () => ({ provider: 'github', model: 'gpt-4o', hasApiKey: false, hasGithubToken: false }),
+    updateSettings: async (_settings: any) => ({ isConnected: false, isInitialized: false }),
   },
 
   // Event listener (no-op in browser)

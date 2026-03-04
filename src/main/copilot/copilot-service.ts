@@ -1,20 +1,24 @@
 /**
  * Copilot SDK Integration Service
- * 
- * This module provides AI assistant capabilities using GitHub Copilot SDK.
- * It's designed to be modular and can be easily removed from the app if needed.
- * 
- * Requirements:
- * - GitHub Copilot CLI must be installed and available in PATH
- * - Valid GitHub Copilot subscription
- * 
+ *
+ * Uses @github/copilot-sdk to provide AI assistant capabilities.
+ * The SDK talks to GitHub Copilot CLI via JSON-RPC and supports
+ * streaming, custom tools, and system-message customisation.
+ *
+ * Authentication:
+ *  1. Logged-in GitHub CLI user (default — no config needed)
+ *  2. GitHub token passed via settings
+ *  3. Custom provider (OpenAI / Azure / Anthropic / Ollama)
+ *
  * @module copilot-service
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { CopilotClient, CopilotSession, defineTool } from '@github/copilot-sdk';
+import { z } from 'zod';
 import Database from 'better-sqlite3';
 
-// Types for Copilot events
+// ────────────────────── Types ──────────────────────
+
 export interface CopilotMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -24,335 +28,576 @@ export interface CopilotMessage {
 export interface CopilotStatus {
   isConnected: boolean;
   isInitialized: boolean;
+  model?: string;
   error?: string;
 }
 
-// Singleton instances
+export interface CopilotSettings {
+  provider: 'github' | 'openai' | 'azure' | 'anthropic' | 'ollama';
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+  githubToken?: string;
+}
+
+const DEFAULT_SETTINGS: CopilotSettings = {
+  provider: 'github',
+  model: 'gpt-4o',
+};
+
+// ────────────────────── Singletons ──────────────────────
+
 let db: Database.Database | null = null;
-let copilotPath: string | null = null;
+let client: CopilotClient | null = null;
+let session: CopilotSession | null = null;
+let currentSettings: CopilotSettings = { ...DEFAULT_SETTINGS };
+let currentStatus: CopilotStatus = {
+  isConnected: false,
+  isInitialized: false,
+};
+
+// ────────────────────── Helpers: app-data tools ──────────────────────
+
+function getAppTools() {
+  if (!db) return [];
+
+  return [
+    defineTool('get_tasks', {
+      description:
+        'Retrieve tasks from the user\'s personal tracker. Can filter by status, priority, or MoSCoW category. Returns JSON array of tasks.',
+      parameters: z.object({
+        status: z
+          .enum(['todo', 'in-progress', 'done', 'all'])
+          .optional()
+          .describe('Filter by task status. Defaults to "all".'),
+        priority: z
+          .enum(['low', 'medium', 'high', 'all'])
+          .optional()
+          .describe('Filter by priority.'),
+        moscow: z
+          .enum(['must', 'should', 'want', 'wont', 'all'])
+          .optional()
+          .describe('Filter by MoSCoW category.'),
+        limit: z.number().optional().describe('Max results to return. Default 50.'),
+      }),
+      handler: async ({ status, priority, moscow, limit }) => {
+        let sql = 'SELECT * FROM tasks WHERE 1=1';
+        const params: any[] = [];
+
+        if (status && status !== 'all') {
+          sql += ' AND status = ?';
+          params.push(status);
+        }
+        if (priority && priority !== 'all') {
+          sql += ' AND priority = ?';
+          params.push(priority);
+        }
+        if (moscow && moscow !== 'all') {
+          sql += ' AND moscow = ?';
+          params.push(moscow);
+        }
+        sql += ' ORDER BY created_at DESC LIMIT ?';
+        params.push(limit ?? 50);
+
+        const rows = db!.prepare(sql).all(...params);
+        return JSON.stringify(rows, null, 2);
+      },
+    }),
+
+    defineTool('create_task', {
+      description:
+        'Create a new task in the user\'s personal tracker. Returns the created task.',
+      parameters: z.object({
+        title: z.string().describe('Task title (required)'),
+        description: z.string().optional().describe('Task description'),
+        priority: z.enum(['low', 'medium', 'high']).optional().describe('Priority level. Defaults to medium.'),
+        moscow: z
+          .enum(['must', 'should', 'want', 'wont'])
+          .optional()
+          .describe('MoSCoW category. Defaults to should.'),
+        due_date: z.string().optional().describe('Due date in YYYY-MM-DD format.'),
+        start_time: z.string().optional().describe('Start time in HH:MM format.'),
+        end_time: z.string().optional().describe('End time in HH:MM format.'),
+        tags: z.string().optional().describe('Comma-separated tags.'),
+      }),
+      handler: async ({ title, description, priority, moscow, due_date, start_time, end_time, tags }) => {
+        const stmt = db!.prepare(`
+          INSERT INTO tasks (title, description, status, priority, moscow, due_date, start_time, end_time, tags)
+          VALUES (?, ?, 'todo', ?, ?, ?, ?, ?, ?)
+        `);
+        const result = stmt.run(
+          title,
+          description ?? '',
+          priority ?? 'medium',
+          moscow ?? 'should',
+          due_date ?? null,
+          start_time ?? null,
+          end_time ?? null,
+          tags ?? null,
+        );
+        const created = db!.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
+        return JSON.stringify(created, null, 2);
+      },
+    }),
+
+    defineTool('update_task', {
+      description: 'Update an existing task by ID. Only changed fields need to be provided.',
+      parameters: z.object({
+        id: z.number().describe('Task ID to update'),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        status: z.enum(['todo', 'in-progress', 'done']).optional(),
+        priority: z.enum(['low', 'medium', 'high']).optional(),
+        moscow: z.enum(['must', 'should', 'want', 'wont']).optional(),
+        due_date: z.string().optional(),
+        start_time: z.string().optional(),
+        end_time: z.string().optional(),
+        tags: z.string().optional(),
+      }),
+      handler: async (params) => {
+        const { id, ...updates } = params;
+        const sets: string[] = [];
+        const vals: any[] = [];
+
+        for (const [key, value] of Object.entries(updates)) {
+          if (value !== undefined) {
+            sets.push(`${key} = ?`);
+            vals.push(value);
+          }
+        }
+        if (sets.length === 0) return 'No fields to update.';
+
+        sets.push("updated_at = datetime('now')");
+        vals.push(id);
+
+        db!.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+        const updated = db!.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+        return JSON.stringify(updated, null, 2);
+      },
+    }),
+
+    defineTool('get_habits', {
+      description: 'Retrieve the user\'s habit list with streak information.',
+      parameters: z.object({}),
+      handler: async () => {
+        const habits = db!.prepare('SELECT * FROM habits ORDER BY created_at DESC').all();
+        return JSON.stringify(habits, null, 2);
+      },
+    }),
+
+    defineTool('get_habit_completions', {
+      description: 'Get habit completion records to analyse streaks and consistency.',
+      parameters: z.object({
+        days: z.number().optional().describe('Number of days back to look. Defaults to 30.'),
+      }),
+      handler: async ({ days }) => {
+        const d = days ?? 30;
+        const rows = db!
+          .prepare(
+            `SELECT hc.*, h.name as habit_name
+             FROM habit_completions hc
+             JOIN habits h ON hc.habit_id = h.id
+             WHERE hc.completed_date >= date('now', '-' || ? || ' days')
+             ORDER BY hc.completed_date DESC`,
+          )
+          .all(d);
+        return JSON.stringify(rows, null, 2);
+      },
+    }),
+
+    defineTool('get_journal_entries', {
+      description: 'Retrieve journal entries. Useful for mood tracking and reflection analysis.',
+      parameters: z.object({
+        days: z.number().optional().describe('Number of recent days. Defaults to 14.'),
+      }),
+      handler: async ({ days }) => {
+        const d = days ?? 14;
+        const rows = db!
+          .prepare(
+            `SELECT * FROM journal
+             WHERE date >= date('now', '-' || ? || ' days')
+             ORDER BY date DESC`,
+          )
+          .all(d);
+        return JSON.stringify(rows, null, 2);
+      },
+    }),
+
+    defineTool('get_time_sessions', {
+      description:
+        'Get Pomodoro / focus time sessions. Useful for productivity analysis.',
+      parameters: z.object({
+        days: z.number().optional().describe('Number of recent days. Defaults to 7.'),
+        task_id: z.number().optional().describe('Filter by task ID.'),
+      }),
+      handler: async ({ days, task_id }) => {
+        let sql = `SELECT ts.*, t.title as task_title
+                   FROM time_sessions ts
+                   LEFT JOIN tasks t ON ts.task_id = t.id
+                   WHERE ts.created_at >= date('now', '-' || ? || ' days')`;
+        const params: any[] = [days ?? 7];
+
+        if (task_id) {
+          sql += ' AND ts.task_id = ?';
+          params.push(task_id);
+        }
+        sql += ' ORDER BY ts.created_at DESC';
+
+        const rows = db!.prepare(sql).all(...params);
+        return JSON.stringify(rows, null, 2);
+      },
+    }),
+
+    defineTool('get_notes', {
+      description: 'Retrieve the user\'s notes.',
+      parameters: z.object({
+        limit: z.number().optional().describe('Max results. Defaults to 20.'),
+      }),
+      handler: async ({ limit }) => {
+        const rows = db!
+          .prepare('SELECT * FROM notes ORDER BY updated_at DESC LIMIT ?')
+          .all(limit ?? 20);
+        return JSON.stringify(rows, null, 2);
+      },
+    }),
+
+    defineTool('get_weekly_plan', {
+      description: 'Get the current or a specific weekly plan.',
+      parameters: z.object({
+        week_start_date: z
+          .string()
+          .optional()
+          .describe('Week start date (YYYY-MM-DD, Monday). Empty = current week.'),
+      }),
+      handler: async ({ week_start_date }) => {
+        let plan;
+        if (week_start_date) {
+          plan = db!.prepare('SELECT * FROM weekly_plans WHERE week_start_date = ?').get(week_start_date);
+        } else {
+          plan = db!.prepare("SELECT * FROM weekly_plans ORDER BY week_start_date DESC LIMIT 1").get();
+        }
+        return plan ? JSON.stringify(plan, null, 2) : 'No weekly plan found.';
+      },
+    }),
+
+    defineTool('get_productivity_summary', {
+      description:
+        'Get a comprehensive productivity summary including task stats, time tracked, habits, and recent activity. Useful for daily/weekly reviews.',
+      parameters: z.object({
+        days: z.number().optional().describe('Number of days to summarise. Defaults to 7.'),
+      }),
+      handler: async ({ days }) => {
+        const d = days ?? 7;
+
+        const taskStats = db!
+          .prepare(
+            `SELECT
+               COUNT(*) as total,
+               SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
+               SUM(CASE WHEN status = 'in-progress' THEN 1 ELSE 0 END) as in_progress,
+               SUM(CASE WHEN status = 'todo' THEN 1 ELSE 0 END) as todo,
+               SUM(CASE WHEN moscow = 'must' AND status != 'done' THEN 1 ELSE 0 END) as must_pending
+             FROM tasks`,
+          )
+          .get();
+
+        const recentCompleted = db!
+          .prepare(
+            `SELECT COUNT(*) as count FROM tasks
+             WHERE status = 'done' AND updated_at >= date('now', '-' || ? || ' days')`,
+          )
+          .get(d) as any;
+
+        const timeStats = db!
+          .prepare(
+            `SELECT
+               COALESCE(SUM(duration_minutes), 0) as total_minutes,
+               COUNT(*) as sessions
+             FROM time_sessions
+             WHERE created_at >= date('now', '-' || ? || ' days')`,
+          )
+          .get(d) as any;
+
+        const habitStats = db!
+          .prepare(
+            `SELECT COUNT(DISTINCT habit_id) as active_habits,
+                    COUNT(*) as completions
+             FROM habit_completions
+             WHERE completed_date >= date('now', '-' || ? || ' days')`,
+          )
+          .get(d) as any;
+
+        const overdueTasks = db!
+          .prepare(
+            `SELECT title, due_date FROM tasks
+             WHERE status != 'done' AND due_date < date('now')
+             ORDER BY due_date ASC LIMIT 5`,
+          )
+          .all();
+
+        return JSON.stringify(
+          {
+            period_days: d,
+            tasks: taskStats,
+            recently_completed: recentCompleted?.count ?? 0,
+            time_tracking: timeStats,
+            habits: habitStats,
+            overdue_tasks: overdueTasks,
+          },
+          null,
+          2,
+        );
+      },
+    }),
+  ];
+}
+
+// ────────────────────── System prompt ──────────────────────
+
+function getSystemMessage(): string {
+  const today = new Date().toISOString().split('T')[0];
+  const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+
+  return `
+<persona>
+You are an AI productivity assistant embedded inside a personal tracker desktop app.
+The app manages tasks (with MoSCoW prioritization & Pomodoro time-tracking),
+habits, journal entries, notes, and weekly plans.
+</persona>
+
+<context>
+Today: ${dayOfWeek}, ${today}
+</context>
+
+<capabilities>
+You have access to tools that read and write the user's data:
+- get_tasks / create_task / update_task — full task CRUD
+- get_habits / get_habit_completions — habit data
+- get_journal_entries — journal/mood entries
+- get_time_sessions — Pomodoro/focus session data
+- get_notes — user's notes
+- get_weekly_plan — weekly planning data
+- get_productivity_summary — aggregate stats
+
+Always use these tools to answer questions about the user's data rather than guessing.
+</capabilities>
+
+<guidelines>
+- Be concise, actionable, and encouraging.
+- Use markdown formatting (bold, bullet lists, numbered lists) for readability.
+- When the user asks you to create or update tasks, use the tools — then confirm what you did.
+- For planning requests, first fetch current data with tools, then provide structured recommendations.
+- For productivity reviews, pull real stats and give concrete, personalised insights.
+- If you're unsure, ask a clarifying question rather than hallucinating data.
+- Keep responses under 400 words unless the user asks for detail.
+</guidelines>
+`.trim();
+}
+
+// ────────────────────── Public API ──────────────────────
 
 /**
- * Initialize the Copilot client
+ * Initialise Copilot — creates the CopilotClient and a session.
  */
-export async function initCopilot(database: Database.Database): Promise<CopilotStatus> {
+export async function initCopilot(
+  database: Database.Database,
+  settings?: Partial<CopilotSettings>,
+): Promise<CopilotStatus> {
+  db = database;
+
+  // Merge any saved settings
+  if (settings) {
+    currentSettings = { ...DEFAULT_SETTINGS, ...settings };
+  }
+
+  // Load settings from DB if available
   try {
-    db = database;
-    
-    // Find copilot CLI in PATH
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    
-    try {
-      const { stdout } = await execAsync(process.platform === 'win32' ? 'where copilot' : 'which copilot');
-      copilotPath = stdout.trim().split('\n')[0];
-      console.log('✅ Found Copilot CLI at:', copilotPath);
-      
-      return {
-        isConnected: true,
-        isInitialized: true,
-      };
-    } catch (error) {
-      console.error('❌ Copilot CLI not found in PATH');
-      return {
-        isConnected: false,
-        isInitialized: false,
-        error: 'Copilot CLI not found. Please install: winget install GitHub.Copilot and restart',
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'copilot_settings'").get() as
+      | { value: string }
+      | undefined;
+    if (row) {
+      const saved = JSON.parse(row.value) as Partial<CopilotSettings>;
+      currentSettings = { ...currentSettings, ...saved };
+    }
+  } catch {
+    // Table may not exist yet — that's fine
+  }
+
+  try {
+    // Clean up any previous client
+    if (client) {
+      try {
+        await client.stop();
+      } catch { /* ignore */ }
+    }
+
+    // Build client options
+    const clientOpts: any = {
+      autoStart: true,
+      autoRestart: true,
+      logLevel: 'warn',
+    };
+
+    if (currentSettings.githubToken) {
+      clientOpts.githubToken = currentSettings.githubToken;
+    }
+
+    client = new CopilotClient(clientOpts);
+    await client.start();
+
+    // Build session config
+    const sessionConfig: any = {
+      model: currentSettings.model || 'gpt-4o',
+      tools: getAppTools(),
+      systemMessage: {
+        content: getSystemMessage(),
+      },
+    };
+
+    // Custom provider (BYOK)
+    if (currentSettings.provider !== 'github' && currentSettings.baseUrl) {
+      sessionConfig.provider = {
+        type: currentSettings.provider === 'ollama' ? 'openai' : currentSettings.provider,
+        baseUrl: currentSettings.baseUrl,
+        apiKey: currentSettings.apiKey,
       };
     }
+
+    session = await client.createSession(sessionConfig);
+
+    currentStatus = {
+      isConnected: true,
+      isInitialized: true,
+      model: currentSettings.model,
+    };
+
+    console.log('✅ Copilot SDK initialized — model:', currentSettings.model);
+    return currentStatus;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('❌ Failed to initialize Copilot:', errorMessage);
-    
-    return {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('❌ Copilot init failed:', msg);
+
+    currentStatus = {
       isConnected: false,
       isInitialized: false,
-      error: errorMessage,
+      error: msg,
     };
+    return currentStatus;
   }
 }
 
 /**
- * Create a Copilot session (simplified - just verify CLI works)
- */
-export async function createCopilotSession(): Promise<boolean> {
-  if (!copilotPath) {
-    console.error('❌ Copilot CLI path not set');
-    return false;
-  }
-  
-  console.log('✅ Copilot session ready');
-  return true;
-}
-
-/**
- * Send a message to Copilot and get a response
- * Simplified version that analyzes local data and provides helpful responses
+ * Send a message and stream the response via a callback.
+ * Returns the full response text.
  */
 export async function sendMessage(
   prompt: string,
-  onDelta?: (content: string) => void
+  onDelta?: (content: string) => void,
 ): Promise<string> {
-  if (!db) {
-    throw new Error('Database not initialized');
+  if (!session) {
+    throw new Error('Copilot not initialised. Call initCopilot first.');
   }
 
-  console.log('💬 Processing query:', prompt);
-  
-  // Simulate streaming for better UX
-  const streamText = (text: string) => {
-    if (onDelta) {
-      const words = text.split(' ');
-      words.forEach((word, i) => {
-        setTimeout(() => {
-          onDelta(word + (i < words.length - 1 ? ' ' : ''));
-        }, i * 50);
-      });
+  console.log('💬 Sending to Copilot SDK:', prompt.substring(0, 80));
+
+  let fullResponse = '';
+
+  // Set up streaming listener
+  const unsub = session.on('assistant.message_delta', (event: any) => {
+    const delta = event.data?.deltaContent ?? '';
+    if (delta) {
+      fullResponse += delta;
+      onDelta?.(delta);
     }
-  };
+  });
 
   try {
-    // Simple query analysis and response generation
-    const lowerPrompt = prompt.toLowerCase();
-    
-    // Query task data
-    const tasks = db.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all() as any[];
-    const todoTasks = tasks.filter(t => t.status === 'todo');
-    const inProgressTasks = tasks.filter(t => t.status === 'in-progress');
-    const doneTasks = tasks.filter(t => t.status === 'done');
-    
-    let response = '';
-    
-    // Handle different types of queries
-    if (lowerPrompt.includes('how many') || lowerPrompt.includes('count')) {
-      if (lowerPrompt.includes('pending') || lowerPrompt.includes('todo')) {
-        response = `📋 You have **${todoTasks.length} pending tasks**.\n\n`;
-        if (todoTasks.length > 0) {
-          response += 'Here are your top tasks:\n';
-          todoTasks.slice(0, 5).forEach((t, i) => {
-            response += `${i + 1}. ${t.title} ${t.due_date ? `(due ${t.due_date})` : ''}\n`;
-          });
-        }
-      } else {
-        response = `📊 **Task Summary:**\n- ✅ Done: ${doneTasks.length}\n- 🔄 In Progress: ${inProgressTasks.length}\n- 📝 To Do: ${todoTasks.length}\n- **Total: ${tasks.length} tasks**`;
-      }
-    } else if (lowerPrompt.includes('list') || lowerPrompt.includes('show')) {
-      if (lowerPrompt.includes('pending') || lowerPrompt.includes('todo')) {
-        response = `📝 **Your To-Do Tasks** (${todoTasks.length}):\n\n`;
-        todoTasks.forEach((t, i) => {
-          response += `${i + 1}. **${t.title}**\n   Priority: ${t.priority} | ${t.due_date ? `Due: ${t.due_date}` : 'No due date'}\n\n`;
-        });
-      } else {
-        response = `📋 **All Your Tasks:**\n\n`;
-        response += `✅ **Done** (${doneTasks.length}):\n${doneTasks.slice(0, 3).map(t => `- ${t.title}`).join('\n')}\n\n`;
-        response += `🔄 **In Progress** (${inProgressTasks.length}):\n${inProgressTasks.map(t => `- ${t.title}`).join('\n')}\n\n`;
-        response += `📝 **To Do** (${todoTasks.length}):\n${todoTasks.slice(0, 5).map(t => `- ${t.title}`).join('\n')}`;
-      }
-    } else if (lowerPrompt.includes('create') || lowerPrompt.includes('add')) {
-      // Extract task details from prompt
-      const taskMatch = prompt.match(/(?:create|add)\s+(?:a\s+)?(?:task|to-?do)?\s*:?\s*(.+)/i);
-      
-      if (taskMatch && taskMatch[1]) {
-        const taskTitle = taskMatch[1].trim();
-        
-        // Determine priority from keywords
-        let priority = 'medium';
-        if (lowerPrompt.includes('urgent') || lowerPrompt.includes('important') || lowerPrompt.includes('high')) {
-          priority = 'high';
-        } else if (lowerPrompt.includes('low') || lowerPrompt.includes('minor')) {
-          priority = 'low';
-        }
-        
-        // Insert task into database
-        const stmt = db.prepare(`
-          INSERT INTO tasks (title, status, priority, moscow)
-          VALUES (?, 'todo', ?, 'should')
-        `);
-        const result = stmt.run(taskTitle, priority);
-        
-        console.log('✅ Task inserted with ID:', result.lastInsertRowid);
-        
-        // Verify task was created
-        const createdTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
-        console.log('📝 Created task:', createdTask);
-        
-        response = `✅ **Task created successfully!**\n\n`;
-        response += `📝 **"${taskTitle}"**\n`;
-        response += `Priority: ${priority}\n`;
-        response += `Status: To Do\n\n`;
-        response += `You can view it in your task list now!`;
-      } else {
-        response = `I can create a task for you! Just tell me what you want to do.\n\n`;
-        response += `**Examples:**\n`;
-        response += `- "Create task: Review project documentation"\n`;
-        response += `- "Add urgent task: Fix bug in production"\n`;
-        response += `- "Create: Prepare presentation for Monday"\n\n`;
-        response += `Or click the blue **+ Add Task** button for more options!`;
-      }
-    } else if (lowerPrompt.includes('productivity') || lowerPrompt.includes('summary')) {
-      const completionRate = tasks.length > 0 ? ((doneTasks.length / tasks.length) * 100).toFixed(0) : 0;
-      response = `📈 **Productivity Summary:**\n\n`;
-      response += `- Total Tasks: ${tasks.length}\n`;
-      response += `- Completed: ${doneTasks.length} (${completionRate}%)\n`;
-      response += `- In Progress: ${inProgressTasks.length}\n`;
-      response += `- Pending: ${todoTasks.length}\n\n`;
-      response += `💡 **Insight:** ${todoTasks.length > inProgressTasks.length ? 'Consider moving some tasks to "In Progress" to track your active work!' : 'Great job staying focused on your in-progress tasks!'}`;
-    } else if (lowerPrompt.includes('plan my week') || lowerPrompt.includes('weekly plan') || lowerPrompt.includes('plan week')) {
-      // Weekly planning command
-      response = `📅 **Let's Plan Your Week!**\n\n`;
-      
-      // Get high priority and must-do tasks
-      const mustTasks = todoTasks.filter(t => t.moscow === 'must');
-      const shouldTasks = todoTasks.filter(t => t.moscow === 'should');
-      const highPriorityTasks = todoTasks.filter(t => t.priority === 'high');
-      
-      // Get tasks with due dates this week
-      const today = new Date();
-      const weekEnd = new Date(today);
-      weekEnd.setDate(weekEnd.getDate() + 7);
-      
-      const thisWeekTasks = todoTasks.filter(t => {
-        if (!t.due_date) return false;
-        const dueDate = new Date(t.due_date);
-        return dueDate >= today && dueDate <= weekEnd;
-      });
-      
-      response += `📊 **Your Current Workload:**\n`;
-      response += `- 🔴 Must-do tasks: ${mustTasks.length}\n`;
-      response += `- 🟠 Should-do tasks: ${shouldTasks.length}\n`;
-      response += `- ⚡ High priority: ${highPriorityTasks.length}\n`;
-      response += `- 📆 Due this week: ${thisWeekTasks.length}\n\n`;
-      
-      // Suggest weekly goals
-      response += `🎯 **Suggested Weekly Goals:**\n`;
-      const goalSuggestions = [];
-      
-      if (mustTasks.length > 0) {
-        goalSuggestions.push(`Complete all ${mustTasks.length} must-do tasks`);
-      }
-      if (highPriorityTasks.length > 0) {
-        goalSuggestions.push(`Finish ${Math.min(highPriorityTasks.length, 3)} high-priority items`);
-      }
-      if (thisWeekTasks.length > 0) {
-        goalSuggestions.push(`Clear ${thisWeekTasks.length} tasks due this week`);
-      }
-      if (inProgressTasks.length > 0) {
-        goalSuggestions.push(`Complete ${inProgressTasks.length} in-progress tasks`);
-      }
-      
-      if (goalSuggestions.length === 0) {
-        goalSuggestions.push('Review and prioritize your task backlog');
-        goalSuggestions.push('Set up new tasks for upcoming projects');
-      }
-      
-      goalSuggestions.slice(0, 4).forEach((goal, i) => {
-        response += `${i + 1}. ${goal}\n`;
-      });
-      
-      // Suggest schedule
-      response += `\n📋 **Recommended Focus Areas by Day:**\n`;
-      const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-      
-      if (mustTasks.length > 0) {
-        response += `- **Mon-Tue:** Focus on must-do tasks (${mustTasks.slice(0, 2).map(t => t.title).join(', ')})\n`;
-      }
-      if (highPriorityTasks.length > 0) {
-        response += `- **Wed-Thu:** High priority work (${highPriorityTasks.slice(0, 2).map(t => t.title).join(', ')})\n`;
-      }
-      response += `- **Friday:** Catch up on remaining tasks and plan next week\n`;
-      
-      response += `\n💡 **Tip:** Open the **Planner** tab to create your weekly plan and set goals!`;
-    } else if (lowerPrompt.includes('schedule') || lowerPrompt.includes('today') || lowerPrompt.includes('what should i work on')) {
-      // Daily planning / what to work on
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Get today's tasks
-      const todayTasks = tasks.filter(t => {
-        const due = t.due_date?.split('T')[0];
-        const start = t.start_time?.split('T')[0];
-        return (due === today || start === today) && t.status !== 'done';
-      });
-      
-      // Get overdue tasks
-      const overdueTasks = todoTasks.filter(t => {
-        if (!t.due_date) return false;
-        return new Date(t.due_date) < new Date(today);
-      });
-      
-      response = `📆 **Your Day Plan:**\n\n`;
-      
-      if (overdueTasks.length > 0) {
-        response += `⚠️ **Overdue Tasks (${overdueTasks.length}):**\n`;
-        overdueTasks.slice(0, 3).forEach(t => {
-          response += `- ${t.title} (due ${t.due_date})\n`;
-        });
-        response += `\n`;
-      }
-      
-      if (todayTasks.length > 0) {
-        response += `📝 **Today's Tasks (${todayTasks.length}):**\n`;
-        todayTasks.forEach(t => {
-          response += `- ${t.title}${t.start_time ? ` @ ${t.start_time.split('T')[1]?.substring(0, 5) || ''}` : ''}\n`;
-        });
-      } else {
-        response += `No tasks scheduled for today.\n`;
-      }
-      
-      response += `\n🎯 **Suggested Focus:**\n`;
-      
-      // Suggest what to work on
-      const mustFirst = todoTasks.find(t => t.moscow === 'must');
-      const highFirst = todoTasks.find(t => t.priority === 'high');
-      const inProgressFirst = inProgressTasks[0];
-      
-      if (inProgressFirst) {
-        response += `1. Continue: **${inProgressFirst.title}** (already in progress)\n`;
-      }
-      if (mustFirst) {
-        response += `${inProgressFirst ? '2' : '1'}. Priority: **${mustFirst.title}** (must-do)\n`;
-      }
-      if (highFirst && highFirst.id !== mustFirst?.id) {
-        response += `${inProgressFirst ? '3' : '2'}. High priority: **${highFirst.title}**\n`;
-      }
-      
-      if (!inProgressFirst && !mustFirst && !highFirst) {
-        response += `Pick any task from your to-do list to get started!`;
-      }
-    } else {
-      // General helpful response
-      response = `I can help you with:\n\n`;
-      response += `📊 **Task Management:**\n- "How many tasks do I have?"\n- "Show my pending tasks"\n- "What's my productivity summary?"\n\n`;
-      response += `📅 **Planning:**\n- "Plan my week"\n- "What should I work on today?"\n- "Show my schedule"\n\n`;
-      response += `✨ **Quick Actions:**\n- "Create task: [task name]"\n- "Add urgent task: [task name]"\n- Click the + button for more options\n\nWhat would you like to know?`;
+    const result = await session.sendAndWait({ prompt }, 120_000);
+
+    // If sendAndWait returned a complete message and we didn't stream, use it
+    if (result?.data?.content && !fullResponse) {
+      fullResponse = result.data.content;
     }
-    
-    // Stream the response
-    streamText(response);
-    
-    // Wait for streaming to complete
-    await new Promise(resolve => setTimeout(resolve, response.split(' ').length * 50 + 100));
-    
-    return response;
-  } catch (error) {
-    console.error('❌ Error processing message:', error);
-    throw error;
+
+    return fullResponse || result?.data?.content || 'No response received.';
+  } finally {
+    unsub();
   }
 }
 
 /**
- * Get Copilot connection status
+ * Get current connection status.
  */
 export function getStatus(): CopilotStatus {
+  return { ...currentStatus };
+}
+
+/**
+ * Get current settings (safe — no secrets).
+ */
+export function getSettings(): Omit<CopilotSettings, 'apiKey' | 'githubToken'> & { hasApiKey: boolean; hasGithubToken: boolean } {
   return {
-    isConnected: copilotPath !== null,
-    isInitialized: copilotPath !== null,
+    provider: currentSettings.provider,
+    model: currentSettings.model,
+    baseUrl: currentSettings.baseUrl,
+    hasApiKey: !!currentSettings.apiKey,
+    hasGithubToken: !!currentSettings.githubToken,
   };
 }
 
 /**
- * Stop Copilot and cleanup resources
+ * Update and persist settings.
+ */
+export async function updateSettings(
+  newSettings: Partial<CopilotSettings>,
+): Promise<CopilotStatus> {
+  currentSettings = { ...currentSettings, ...newSettings };
+
+  // Persist to DB
+  if (db) {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      db.prepare(
+        `INSERT OR REPLACE INTO app_settings (key, value, updated_at)
+         VALUES ('copilot_settings', ?, datetime('now'))`,
+      ).run(JSON.stringify(currentSettings));
+    } catch (err) {
+      console.error('Failed to persist copilot settings:', err);
+    }
+  }
+
+  // Re-initialise with new settings
+  if (db) {
+    return initCopilot(db);
+  }
+
+  return currentStatus;
+}
+
+/**
+ * Stop Copilot and clean up.
  */
 export async function stopCopilot(): Promise<void> {
+  try {
+    if (session) {
+      await session.destroy();
+      session = null;
+    }
+  } catch { /* ignore */ }
+
+  try {
+    if (client) {
+      await client.stop();
+      client = null;
+    }
+  } catch { /* ignore */ }
+
+  currentStatus = { isConnected: false, isInitialized: false };
   console.log('✅ Copilot cleanup complete');
-  copilotPath = null;
 }

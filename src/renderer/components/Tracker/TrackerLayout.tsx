@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, GripVertical, Sparkles,
   Flag, Trash2, Edit2, MoreHorizontal, Calendar,
   Sun, Moon, Settings, Play, Pause, RotateCcw,
-  ChevronDown, ChevronUp, X, Search
+  ChevronDown, ChevronUp, X, Search, MessageSquare
 } from 'lucide-react';
 import { 
   format, startOfWeek, endOfWeek, addWeeks, subWeeks, 
@@ -28,6 +28,7 @@ interface TrackerLayoutProps {
   onDeleteNote: (id: number) => void;
   onStartFocus: (taskId: number, taskTitle: string) => void;
   onOpenTaskForm: (date?: Date, time?: string) => void;
+  onToggleCopilot?: () => void;
 }
 
 /* ───── MoSCoW config ───── */
@@ -134,6 +135,7 @@ function layoutOverlappingTasks(dayTasks: Task[]): LayoutInfo[] {
 const TrackerLayout: React.FC<TrackerLayoutProps> = ({
   tasks, notes, onAddTask, onUpdateTask, onDeleteTask, onEditTask,
   onAddNote, onUpdateNote, onDeleteNote, onStartFocus, onOpenTaskForm,
+  onToggleCopilot,
 }) => {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
@@ -316,6 +318,15 @@ const TrackerLayout: React.FC<TrackerLayoutProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          {onToggleCopilot && (
+            <button
+              onClick={onToggleCopilot}
+              className={`p-2 rounded-lg transition-colors ${s.hover} group relative`}
+              title="AI Assistant"
+            >
+              <Sparkles size={15} className="text-violet-500" />
+            </button>
+          )}
           <button onClick={toggleTheme} className={`p-2 rounded-lg transition-colors ${s.hover} ${s.textMuted}`}>
             {isDark ? <Sun size={15} /> : <Moon size={15} />}
           </button>

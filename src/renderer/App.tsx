@@ -216,6 +216,7 @@ function App() {
           setEditingTask(null);
           setIsFormOpen(true);
         }}
+        onToggleCopilot={() => setIsCopilotOpen(prev => !prev)}
       />
 
       {/* Task Form Modal */}
