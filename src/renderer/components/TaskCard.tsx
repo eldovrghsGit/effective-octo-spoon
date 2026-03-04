@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Clock, Edit, Trash2, CheckCircle2, Circle, AlertCircle, ChevronUp, Check, X, Tag as TagIcon, MoreHorizontal } from 'lucide-react';
+import { Calendar, Clock, Edit, Trash2, CheckCircle2, Circle, AlertCircle, ChevronUp, Check, X, Tag as TagIcon, MoreHorizontal, Hourglass } from 'lucide-react';
 import { format } from 'date-fns';
 import { Task } from '../App';
 import { StartFocusButton } from './TimeTracking/TaskTimer';
@@ -28,6 +28,11 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
   const [isEditingTags, setIsEditingTags] = useState(false);
   const [editedTags, setEditedTags] = useState(task.tags || '');
   const [showActions, setShowActions] = useState(false);
+  const [isLoggingTime, setIsLoggingTime] = useState(false);
+  const [logHours, setLogHours] = useState(0);
+  const [logMinutes, setLogMinutes] = useState(0);
+  const [logSaving, setLogSaving] = useState(false);
+  const [logSuccess, setLogSuccess] = useState(false);
   
   const titleInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -145,6 +150,42 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
     setIsEditingTags(false);
   };
 
+  const handleLogTime = async () => {
+    const totalMinutes = logHours * 60 + logMinutes;
+    if (totalMinutes <= 0) return;
+    setLogSaving(true);
+    try {
+      const now = new Date();
+      const startTime = new Date(now.getTime() - totalMinutes * 60000);
+      await window.electronAPI.createTimeSession({
+        task_id: task.id,
+        session_type: 'manual',
+        duration_minutes: totalMinutes,
+        planned_duration: totalMinutes,
+        start_time: startTime.toISOString(),
+        end_time: now.toISOString(),
+        interruptions: 0,
+        focus_quality: 'medium',
+        notes: null,
+        completed: true,
+      });
+      // Update local task with new actual_minutes so the badge refreshes
+      const newActual = (task.actual_minutes || 0) + totalMinutes;
+      onUpdateTask(task.id, { actual_minutes: newActual });
+      setLogSuccess(true);
+      setTimeout(() => {
+        setIsLoggingTime(false);
+        setLogHours(0);
+        setLogMinutes(0);
+        setLogSuccess(false);
+      }, 1200);
+    } catch (err) {
+      console.error('Failed to log time:', err);
+    } finally {
+      setLogSaving(false);
+    }
+  };
+
   const handlePriorityClick = () => {
     const priorities: Task['priority'][] = ['low', 'medium', 'high'];
     const currentIndex = priorities.indexOf(task.priority);
@@ -223,11 +264,13 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
 
     return (
       <div
+        onMouseEnter={() => setShowActions(true)}
+        onMouseLeave={() => setShowActions(false)}
+      >
+      <div
         draggable
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
-        onMouseEnter={() => setShowActions(true)}
-        onMouseLeave={() => setShowActions(false)}
         className={`group flex items-center gap-2 px-3 py-1.5 border-b ${t.border} ${t.rowBg} ${t.rowHover} transition-colors ${
           isDragging ? 'opacity-50' : ''
         }`}
@@ -299,6 +342,14 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
           </div>
         )}
 
+        {/* Tracked time */}
+        {(task.actual_minutes ?? 0) > 0 && (
+          <div className={`text-[10px] flex items-center gap-0.5 flex-shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} title={`${task.actual_minutes}min tracked`}>
+            <Hourglass size={10} />
+            <span>{(task.actual_minutes ?? 0) >= 60 ? `${Math.floor((task.actual_minutes ?? 0) / 60)}h${(task.actual_minutes ?? 0) % 60 > 0 ? `${(task.actual_minutes ?? 0) % 60}m` : ''}` : `${task.actual_minutes}m`}</span>
+          </div>
+        )}
+
         {/* Date */}
         <div className="w-16 flex-shrink-0">
           <span className={`text-[11px] ${isOverdue ? 'text-red-500' : t.textMuted}`}>
@@ -331,6 +382,19 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
               onStartFocus={onStartFocus}
               size="sm"
             />
+          )}
+          {/* Log Time Button */}
+          {task.status !== 'done' && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsLoggingTime(!isLoggingTime);
+              }}
+              className={`p-1 rounded ${t.textMuted} hover:text-amber-500`}
+              title="Log time manually"
+            >
+              <Hourglass size={12} />
+            </button>
           )}
           <button
             onClick={(e) => {
@@ -365,18 +429,73 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
           </button>
         )}
       </div>
+
+      {/* Manual Time Logging Panel (compact) */}
+      {isLoggingTime && (
+        <div className={`col-span-full flex items-center gap-2 px-3 py-1.5 border-t ${t.border} ${isLight ? 'bg-amber-50' : 'bg-amber-500/10'}`} onClick={e => e.stopPropagation()}>
+          <Hourglass size={12} className="text-amber-500 flex-shrink-0" />
+          <span className={`text-[10px] ${t.textMuted} flex-shrink-0`}>Log:</span>
+          <input
+            type="number"
+            min={0}
+            max={23}
+            value={logHours}
+            onChange={e => setLogHours(Math.max(0, parseInt(e.target.value) || 0))}
+            className={`w-10 px-1 py-0.5 text-[11px] rounded border ${isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-slate-600 bg-slate-800 text-white'} text-center`}
+            onClick={e => e.stopPropagation()}
+          />
+          <span className={`text-[10px] ${t.textMuted}`}>h</span>
+          <input
+            type="number"
+            min={0}
+            max={59}
+            value={logMinutes}
+            onChange={e => setLogMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+            className={`w-10 px-1 py-0.5 text-[11px] rounded border ${isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-slate-600 bg-slate-800 text-white'} text-center`}
+            onClick={e => e.stopPropagation()}
+          />
+          <span className={`text-[10px] ${t.textMuted}`}>m</span>
+          {logSuccess ? (
+            <span className="text-green-500 text-[10px] flex items-center gap-1"><Check size={10} /> Saved!</span>
+          ) : (
+            <>
+              <button
+                onClick={handleLogTime}
+                disabled={logSaving || (logHours === 0 && logMinutes === 0)}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                  logSaving || (logHours === 0 && logMinutes === 0)
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-amber-500 text-white hover:bg-amber-600'
+                }`}
+              >
+                {logSaving ? '...' : 'Save'}
+              </button>
+              <button
+                onClick={() => { setIsLoggingTime(false); setLogHours(0); setLogMinutes(0); }}
+                className={`p-0.5 rounded ${t.textMuted} hover:text-red-500`}
+              >
+                <X size={10} />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
     );
   }
 
   // Original full card layout
   return (
     <div
+      className={`border-l-4 ${moscowColors[task.moscow || 'should']} hover:bg-[#2a2a3e]/50 transition-all duration-200 ${
+        isDragging ? 'opacity-50' : ''
+      }`}
+    >
+    <div
       draggable
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      className={`group flex items-start gap-0 border-l-4 ${moscowColors[task.moscow || 'should']} hover:bg-[#2a2a3e]/50 transition-all duration-200 py-3 px-2 ${
-        isDragging ? 'opacity-50' : ''
-      }`}
+      className={`group flex items-start gap-0 py-3 px-2`}
     >
       {/* Line number */}
       {taskNumber && (
@@ -538,6 +657,14 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
             </div>
           )}
 
+          {/* Tracked time */}
+          {(task.actual_minutes ?? 0) > 0 && (
+            <div className="flex items-center gap-1 text-xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded" title={`${task.actual_minutes}min tracked`}>
+              <Hourglass size={12} />
+              <span>{(task.actual_minutes ?? 0) >= 60 ? `${Math.floor((task.actual_minutes ?? 0) / 60)}h${(task.actual_minutes ?? 0) % 60 > 0 ? ` ${(task.actual_minutes ?? 0) % 60}m` : ''}` : `${task.actual_minutes}m`}</span>
+            </div>
+          )}
+
           {/* Editable Tags */}
           {isEditingTags ? (
             <div className="flex items-center gap-1">
@@ -599,6 +726,19 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
             size="sm"
           />
         )}
+        {/* Log time manually */}
+        {task.status !== 'done' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsLoggingTime(!isLoggingTime);
+            }}
+            className="p-1.5 text-gray-400 hover:text-amber-400 rounded transition-all"
+            title="Log time manually"
+          >
+            <Hourglass size={14} />
+          </button>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -620,6 +760,56 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, taskNumber, onEdit, onDelete,
           <Trash2 size={14} />
         </button>
       </div>
+      </div>
+
+      {/* Manual Time Logging Panel (full card) */}
+      {isLoggingTime && (
+        <div className={`mt-2 mx-2 flex items-center gap-2 px-2 py-2 rounded-lg ${isLight ? 'bg-amber-50 border border-amber-200' : 'bg-amber-500/10 border border-amber-500/20'}`} onClick={e => e.stopPropagation()}>
+          <Hourglass size={14} className="text-amber-500 flex-shrink-0" />
+          <span className={`text-xs ${isLight ? 'text-gray-600' : 'text-slate-400'}`}>Log time:</span>
+          <input
+            type="number"
+            min={0}
+            max={23}
+            value={logHours}
+            onChange={e => setLogHours(Math.max(0, parseInt(e.target.value) || 0))}
+            className={`w-12 px-1.5 py-0.5 text-xs rounded border ${isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-slate-600 bg-slate-800 text-white'} text-center`}
+          />
+          <span className={`text-xs ${isLight ? 'text-gray-500' : 'text-slate-400'}`}>h</span>
+          <input
+            type="number"
+            min={0}
+            max={59}
+            value={logMinutes}
+            onChange={e => setLogMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+            className={`w-12 px-1.5 py-0.5 text-xs rounded border ${isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-slate-600 bg-slate-800 text-white'} text-center`}
+          />
+          <span className={`text-xs ${isLight ? 'text-gray-500' : 'text-slate-400'}`}>m</span>
+          {logSuccess ? (
+            <span className="text-green-500 text-xs flex items-center gap-1"><Check size={12} /> Saved!</span>
+          ) : (
+            <>
+              <button
+                onClick={handleLogTime}
+                disabled={logSaving || (logHours === 0 && logMinutes === 0)}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  logSaving || (logHours === 0 && logMinutes === 0)
+                    ? isLight ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                    : 'bg-amber-500 text-white hover:bg-amber-600'
+                }`}
+              >
+                {logSaving ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                onClick={() => { setIsLoggingTime(false); setLogHours(0); setLogMinutes(0); }}
+                className={`p-1 rounded ${isLight ? 'text-gray-400 hover:text-red-500' : 'text-slate-400 hover:text-red-400'}`}
+              >
+                <X size={14} />
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };

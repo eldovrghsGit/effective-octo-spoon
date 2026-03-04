@@ -212,6 +212,7 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
   const [copilotPrompt, setCopilotPrompt] = useState<{ show: boolean; anchorEl: HTMLElement | null }>({ show: false, anchorEl: null });
   const [copilotInput, setCopilotInput] = useState('');
   const [copilotLoading, setCopilotLoading] = useState(false);
+  const [copilotConnError, setCopilotConnError] = useState<string | null>(null);
   const copilotInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -414,9 +415,32 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
       placeholder.setAttribute('data-copilot', 'true');
       placeholder.innerHTML = '';
       blockEl.replaceWith(placeholder);
+      setCopilotConnError(null);
+      setCopilotLoading(true);
       setCopilotPrompt({ show: true, anchorEl: placeholder });
       setCopilotInput('');
-      setTimeout(() => copilotInputRef.current?.focus(), 50);
+
+      // Check copilot connection before allowing input
+      (async () => {
+        try {
+          const status = await window.electronAPI.copilot.status();
+          if (!status.isConnected || !status.isInitialized) {
+            // Try to init
+            const initResult = await window.electronAPI.copilot.init();
+            if (!initResult.isConnected || initResult.error) {
+              setCopilotConnError(initResult.error || 'Copilot is not connected. Open AI Assistant panel to configure.');
+              setCopilotLoading(false);
+              return;
+            }
+          }
+          setCopilotConnError(null);
+          setCopilotLoading(false);
+          setTimeout(() => copilotInputRef.current?.focus(), 50);
+        } catch (err) {
+          setCopilotConnError(err instanceof Error ? err.message : 'Failed to check Copilot connection');
+          setCopilotLoading(false);
+        }
+      })();
       return;
     }
 
@@ -632,6 +656,42 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
               <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin ml-auto" />
             )}
           </div>
+          {copilotConnError ? (
+            <div className={`rounded-lg p-3 text-xs ${isDark ? 'bg-red-500/10 border border-red-500/20 text-red-300' : 'bg-red-50 border border-red-200 text-red-600'}`}>
+              <p className="font-semibold mb-1">{copilotConnError}</p>
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  onClick={async () => {
+                    setCopilotLoading(true);
+                    setCopilotConnError(null);
+                    try {
+                      const result = await window.electronAPI.copilot.init();
+                      if (result.isConnected && !result.error) {
+                        setCopilotLoading(false);
+                        setTimeout(() => copilotInputRef.current?.focus(), 50);
+                      } else {
+                        setCopilotConnError(result.error || 'Still not connected');
+                        setCopilotLoading(false);
+                      }
+                    } catch (err) {
+                      setCopilotConnError(err instanceof Error ? err.message : 'Retry failed');
+                      setCopilotLoading(false);
+                    }
+                  }}
+                  className="text-xs font-medium text-violet-400 hover:text-violet-300 transition-colors"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={handleCopilotCancel}
+                  className={`text-xs ${isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+          <>
           <div className={`flex gap-2 items-center rounded-lg border px-3 py-2 ${
             isDark ? 'bg-white/[0.05] border-white/[0.08]' : 'bg-gray-50 border-gray-200'
           }`}>
@@ -686,6 +746,8 @@ const DailyCanvas: React.FC<DailyCanvasProps> = ({
               Cancel
             </button>
           </div>
+          </>
+          )}
         </div>
       )}
     </div>

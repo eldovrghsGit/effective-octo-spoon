@@ -414,17 +414,30 @@ const TrackerLayout: React.FC<TrackerLayoutProps> = ({
             {/* Completed section */}
             {doneTasks.length > 0 && (
               <div>
-                <button
-                  onClick={() => setCollapsed(p => ({ ...p, done: !p.done }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-wider ${s.textDim} ${s.hover} mt-2`}
-                >
-                  <CheckCircle2 size={12} />
-                  <span>Completed</span>
-                  <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] ${isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
-                    {doneTasks.length}
-                  </span>
-                  {collapsed.done ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-                </button>
+                <div className="flex items-center mt-2">
+                  <button
+                    onClick={() => setCollapsed(p => ({ ...p, done: !p.done }))}
+                    className={`flex-1 flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-wider ${s.textDim} ${s.hover}`}
+                  >
+                    <CheckCircle2 size={12} />
+                    <span>Completed</span>
+                    <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] ${isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
+                      {doneTasks.length}
+                    </span>
+                    {collapsed.done ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete all ${doneTasks.length} completed tasks?`)) {
+                        doneTasks.forEach(t => onDeleteTask(t.id));
+                      }
+                    }}
+                    className={`p-1.5 rounded-md text-[10px] font-medium transition-colors ${isDark ? 'text-red-400 hover:bg-red-500/15' : 'text-red-500 hover:bg-red-50'}`}
+                    title="Delete all completed tasks"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
                 {!collapsed.done && (
                   <div className="space-y-0.5 mt-0.5">
                     {doneTasks.slice(0, 10).map(task => (

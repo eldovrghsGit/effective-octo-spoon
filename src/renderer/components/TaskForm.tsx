@@ -16,7 +16,8 @@ import {
   AlertTriangle,
   Minus,
   ArrowUp,
-  Target
+  Target,
+  Hourglass
 } from 'lucide-react';
 import { Task } from '../App';
 import RichTextEditor from './RichTextEditor';
@@ -45,6 +46,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
   const [endTime, setEndTime] = useState('');
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [tags, setTags] = useState<string[]>([]);
+  const [logHours, setLogHours] = useState(0);
+  const [logMinutes, setLogMinutes] = useState(0);
   const { theme } = useTheme();
 
   // Status options for visual indicators
@@ -108,6 +111,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
     setEndTime('');
     setSubtasks([]);
     setTags([]);
+    setLogHours(0);
+    setLogMinutes(0);
   };
 
   const handleAddSubtask = async (title: string) => {
@@ -152,6 +157,25 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
       return;
     }
 
+    // Log manual time if hours/minutes were entered
+    const totalLogMinutes = logHours * 60 + logMinutes;
+    if (totalLogMinutes > 0 && editingTask?.id) {
+      const now = new Date();
+      const sessionStart = new Date(now.getTime() - totalLogMinutes * 60000);
+      window.electronAPI.createTimeSession({
+        task_id: editingTask.id,
+        session_type: 'manual',
+        duration_minutes: totalLogMinutes,
+        planned_duration: totalLogMinutes,
+        start_time: sessionStart.toISOString(),
+        end_time: now.toISOString(),
+        interruptions: 0,
+        focus_quality: 'medium',
+        notes: null,
+        completed: true,
+      }).catch((err: any) => console.error('Failed to log time:', err));
+    }
+
     onSubmit({
       title: title.trim(),
       description: description.trim(),
@@ -162,7 +186,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
       start_time: startTime || null,
       end_time: endTime || null,
       tags: tags.length > 0 ? tags.join(',') : null,
-    });
+      ...(totalLogMinutes > 0 && editingTask ? { actual_minutes: (editingTask.actual_minutes || 0) + totalLogMinutes } : {}),
+    } as any);
 
     // Don't reset here - let the parent component handle closing and resetting
     // resetForm();
@@ -347,6 +372,53 @@ const TaskForm: React.FC<TaskFormProps> = ({ isOpen, onClose, onSubmit, editingT
                   </div>
                 </div>
               </div>
+
+              {/* Row: Log Time Worked */}
+              {editingTask && (
+                <div className="px-3 py-2">
+                  <div className="flex items-center">
+                    <span className={`text-xs ${t.textLabel} w-16 flex items-center gap-1`}>
+                      <Hourglass size={11} className="text-amber-500" />
+                      Log time
+                    </span>
+                    <div className="flex-1 flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        max={23}
+                        value={logHours}
+                        onChange={e => setLogHours(Math.max(0, parseInt(e.target.value) || 0))}
+                        className={`w-14 px-2 py-1 ${t.inputBg} border ${t.borderInput} rounded-md ${t.text} text-xs text-center focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 outline-none`}
+                      />
+                      <span className={`text-xs ${t.textMuted}`}>h</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={59}
+                        value={logMinutes}
+                        onChange={e => setLogMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                        className={`w-14 px-2 py-1 ${t.inputBg} border ${t.borderInput} rounded-md ${t.text} text-xs text-center focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 outline-none`}
+                      />
+                      <span className={`text-xs ${t.textMuted}`}>m</span>
+                    </div>
+                  </div>
+                  {/* Tracked time summary */}
+                  {((editingTask.actual_minutes ?? 0) > 0 || (editingTask.pomodoros_completed ?? 0) > 0) && (
+                    <div className={`flex items-center gap-3 mt-1.5 ml-16 text-[10px] ${isLight ? 'text-gray-500' : 'text-slate-400'}`}>
+                      <span className={`font-medium ${isLight ? 'text-amber-600' : 'text-amber-400'}`}>
+                        Tracked: {(editingTask.actual_minutes ?? 0) >= 60
+                          ? `${Math.floor((editingTask.actual_minutes ?? 0) / 60)}h ${(editingTask.actual_minutes ?? 0) % 60 > 0 ? `${(editingTask.actual_minutes ?? 0) % 60}m` : ''}`
+                          : `${editingTask.actual_minutes ?? 0}m`}
+                      </span>
+                      {(editingTask.pomodoros_completed ?? 0) > 0 && (
+                        <span className={`flex items-center gap-0.5 ${isLight ? 'text-red-500' : 'text-red-400'}`}>
+                          🍅 {editingTask.pomodoros_completed} pomodoro{(editingTask.pomodoros_completed ?? 0) > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Subtasks - Compact inline */}

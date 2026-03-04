@@ -9,7 +9,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Bot, User, Loader2, X, Minimize2, Maximize2,
   Settings, Sparkles, ListTodo, BarChart3, Calendar, Brain,
-  RefreshCw,
+  RefreshCw, CheckSquare, BookOpen, Plus, Trash2, Check,
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -19,9 +19,41 @@ interface Message {
   timestamp: Date;
 }
 
+interface SavedPrompt {
+  id: string;
+  label: string;
+  prompt: string;
+  createdAt: string;
+}
+
 interface CopilotChatProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+/** Extract task-like lines from assistant message text */
+function extractTaskLines(content: string): string[] {
+  return content
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => {
+      // Match lines that look like list items or task descriptions
+      return (
+        /^[-*•]\s+/.test(line) ||
+        /^\d+[.)\]]\s+/.test(line) ||
+        /^\[[ x]?\]\s+/.test(line)
+      );
+    })
+    .map(line =>
+      line
+        .replace(/^[-*•]\s+/, '')
+        .replace(/^\d+[.)\]]\s+/, '')
+        .replace(/^\[[ x]?\]\s+/, '')
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/`(.+?)`/g, '$1')
+        .trim()
+    )
+    .filter(line => line.length > 2 && line.length < 200);
 }
 
 interface SafeSettings {
@@ -83,8 +115,99 @@ export default function CopilotChat({ isOpen, onClose }: CopilotChatProps) {
     githubToken: '',
   });
 
+  // Task extraction from messages
+  const [extractingIdx, setExtractingIdx] = useState<number | null>(null);
+  const [extractedTasks, setExtractedTasks] = useState<{ text: string; selected: boolean }[]>([]);
+  const [creatingTasks, setCreatingTasks] = useState(false);
+
+  // Prompt library
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
+  const [showPromptLib, setShowPromptLib] = useState(false);
+  const [newPromptLabel, setNewPromptLabel] = useState('');
+  const [savingCurrentPrompt, setSavingCurrentPrompt] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load saved prompts from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('copilot-prompt-library');
+      if (stored) setSavedPrompts(JSON.parse(stored));
+    } catch { /* ignore */ }
+  }, []);
+
+  const persistPrompts = (prompts: SavedPrompt[]) => {
+    setSavedPrompts(prompts);
+    localStorage.setItem('copilot-prompt-library', JSON.stringify(prompts));
+  };
+
+  const handleSavePrompt = () => {
+    const label = newPromptLabel.trim() || input.trim().slice(0, 40);
+    if (!input.trim()) return;
+    const newPrompt: SavedPrompt = {
+      id: Date.now().toString(),
+      label,
+      prompt: input.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    persistPrompts([newPrompt, ...savedPrompts]);
+    setNewPromptLabel('');
+    setSavingCurrentPrompt(false);
+  };
+
+  const handleDeletePrompt = (id: string) => {
+    persistPrompts(savedPrompts.filter(p => p.id !== id));
+  };
+
+  const handleUsePrompt = (prompt: string) => {
+    setInput(prompt);
+    setShowPromptLib(false);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  // Extract tasks from a message
+  const handleExtractTasks = (msgIdx: number) => {
+    const msg = messages[msgIdx];
+    if (!msg || msg.role !== 'assistant') return;
+    const lines = extractTaskLines(msg.content);
+    setExtractedTasks(lines.map(text => ({ text, selected: true })));
+    setExtractingIdx(msgIdx);
+  };
+
+  // Create selected tasks
+  const handleCreateExtractedTasks = async () => {
+    const selected = extractedTasks.filter(t => t.selected);
+    if (selected.length === 0) return;
+    setCreatingTasks(true);
+    try {
+      for (const item of selected) {
+        await window.electronAPI.createTask({
+          title: item.text,
+          description: '',
+          status: 'todo',
+          priority: 'medium',
+          moscow: 'should',
+          due_date: null,
+          start_time: null,
+          end_time: null,
+          tags: null,
+        });
+      }
+      // Trigger refresh
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `✅ Created ${selected.length} task${selected.length > 1 ? 's' : ''} from the response.`,
+        timestamp: new Date(),
+      }]);
+    } catch (err) {
+      setError('Failed to create tasks: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setCreatingTasks(false);
+      setExtractingIdx(null);
+      setExtractedTasks([]);
+    }
+  };
 
   // Theme styles
   const s = {
@@ -438,9 +561,71 @@ export default function CopilotChat({ isOpen, onClose }: CopilotChatProps) {
                         })}
                       </div>
                     </div>
-                    <div className={`text-[10px] ${s.textDim} mt-0.5 px-1`}>
-                      {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {/* Action buttons for assistant messages */}
+                    <div className={`flex items-center gap-1 mt-0.5 px-1 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                      <span className={`text-[10px] ${s.textDim}`}>
+                        {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      {msg.role === 'assistant' && extractTaskLines(msg.content).length > 0 && (
+                        <button
+                          onClick={() => handleExtractTasks(idx)}
+                          className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md transition-colors ${
+                            isDark ? 'text-violet-400 hover:bg-violet-500/15' : 'text-violet-600 hover:bg-violet-50'
+                          }`}
+                          title="Add items as tasks"
+                        >
+                          <CheckSquare className="w-3 h-3" />
+                          Add as Tasks
+                        </button>
+                      )}
                     </div>
+
+                    {/* Task extraction panel */}
+                    {extractingIdx === idx && (
+                      <div className={`mt-2 rounded-lg border p-3 max-w-[85%] ${isDark ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className={`text-xs font-semibold mb-2 ${s.text}`}>
+                          Select items to add as tasks:
+                        </div>
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                          {extractedTasks.map((item, i) => (
+                            <label
+                              key={i}
+                              className={`flex items-start gap-2 text-xs cursor-pointer rounded-md px-2 py-1.5 transition-colors ${
+                                isDark ? 'hover:bg-white/[0.04]' : 'hover:bg-gray-100'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={item.selected}
+                                onChange={() =>
+                                  setExtractedTasks(prev =>
+                                    prev.map((t, j) => (j === i ? { ...t, selected: !t.selected } : t))
+                                  )
+                                }
+                                className="mt-0.5 accent-violet-500"
+                              />
+                              <span className={`${s.text} leading-tight`}>{item.text}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 mt-2 pt-2 border-t border-inherit">
+                          <button
+                            onClick={handleCreateExtractedTasks}
+                            disabled={creatingTasks || extractedTasks.every(t => !t.selected)}
+                            className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium transition-colors disabled:opacity-40"
+                          >
+                            {creatingTasks ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            Create {extractedTasks.filter(t => t.selected).length} Task{extractedTasks.filter(t => t.selected).length !== 1 ? 's' : ''}
+                          </button>
+                          <button
+                            onClick={() => { setExtractingIdx(null); setExtractedTasks([]); }}
+                            className={`text-xs px-2 py-1.5 rounded-lg ${s.chip} transition-colors`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -500,7 +685,75 @@ export default function CopilotChat({ isOpen, onClose }: CopilotChatProps) {
 
             {/* ─── Input ─── */}
             <div className={`px-3 py-3 border-t ${s.border}`}>
+              {/* Prompt Library Panel */}
+              {showPromptLib && (
+                <div className={`mb-2 rounded-lg border p-3 ${isDark ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-gray-50 border-gray-200'}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`text-xs font-semibold ${s.text}`}>Prompt Library</span>
+                    <button onClick={() => setShowPromptLib(false)} className={`p-1 rounded ${s.hover} ${s.textMuted}`}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                  {savedPrompts.length === 0 ? (
+                    <p className={`text-xs ${s.textDim} py-2 text-center`}>No saved prompts yet. Type a prompt and save it!</p>
+                  ) : (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {savedPrompts.map(p => (
+                        <div
+                          key={p.id}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs cursor-pointer group transition-colors ${
+                            isDark ? 'hover:bg-white/[0.06]' : 'hover:bg-gray-100'
+                          }`}
+                        >
+                          <button
+                            onClick={() => handleUsePrompt(p.prompt)}
+                            className={`flex-1 text-left truncate ${s.text}`}
+                            title={p.prompt}
+                          >
+                            <span className="font-medium">{p.label}</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeletePrompt(p.id)}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-red-400 hover:bg-red-500/15 transition-all"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Save current prompt inline */}
+              {savingCurrentPrompt && input.trim() && (
+                <div className={`mb-2 flex items-center gap-2`}>
+                  <input
+                    value={newPromptLabel}
+                    onChange={e => setNewPromptLabel(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSavePrompt(); if (e.key === 'Escape') setSavingCurrentPrompt(false); }}
+                    placeholder="Prompt label (optional)"
+                    className={`flex-1 text-xs rounded-lg px-2.5 py-1.5 border ${s.input} outline-none`}
+                    autoFocus
+                  />
+                  <button onClick={handleSavePrompt} className="text-xs px-2 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium">
+                    Save
+                  </button>
+                  <button onClick={() => setSavingCurrentPrompt(false)} className={`text-xs px-2 py-1.5 rounded-lg ${s.chip}`}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+
               <div className={`flex gap-2 items-end rounded-xl border px-3 py-2 ${s.input} focus-within:ring-2 focus-within:ring-violet-500/30 transition-all`}>
+                {/* Prompt library toggle */}
+                <button
+                  onClick={() => setShowPromptLib(!showPromptLib)}
+                  className={`flex-shrink-0 p-1.5 rounded-lg transition-colors ${showPromptLib ? 'text-violet-400 bg-violet-500/15' : s.textMuted + ' ' + s.hover}`}
+                  title="Prompt Library"
+                >
+                  <BookOpen className="w-4 h-4" />
+                </button>
                 <textarea
                   ref={inputRef}
                   value={input}
@@ -517,6 +770,16 @@ export default function CopilotChat({ isOpen, onClose }: CopilotChatProps) {
                     el.style.height = Math.min(el.scrollHeight, 100) + 'px';
                   }}
                 />
+                {/* Save prompt button */}
+                {input.trim() && !savingCurrentPrompt && (
+                  <button
+                    onClick={() => setSavingCurrentPrompt(true)}
+                    className={`flex-shrink-0 p-1.5 rounded-lg transition-colors ${s.textMuted} ${s.hover}`}
+                    title="Save to Prompt Library"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   onClick={() => handleSend()}
                   disabled={!input.trim() || !isInitialized || isLoading}
