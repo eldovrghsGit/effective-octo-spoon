@@ -16,6 +16,9 @@ export interface Task {
   start_time: string | null;
   end_time: string | null;
   tags: string | null;
+  actual_minutes?: number | null;
+  pomodoros_completed?: number | null;
+  estimated_minutes?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -102,6 +105,11 @@ function App() {
 
   const handleMinimizeFocus = () => {
     setIsFocusExpanded(false);
+  };
+
+  // Handle session complete from timer — reload tasks to reflect updated actual_minutes
+  const handleTimerSessionComplete = async () => {
+    await loadTasks();
   };
 
   // Handle completing a task from the timer
@@ -247,6 +255,7 @@ function App() {
           onMinimize={handleMinimizeFocus}
           onClose={handleCloseFocus}
           onTaskComplete={handleTimerTaskComplete}
+          onSessionComplete={handleTimerSessionComplete}
           onNextTask={handleNextTask}
         />
       )}

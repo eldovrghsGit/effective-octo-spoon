@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Pause, RotateCcw, SkipForward, Coffee, Brain, Settings, Volume2, VolumeX, CheckCircle2, ChevronRight } from 'lucide-react';
+import { useTheme } from '../../contexts/ThemeContext';
 import { 
   TimerState, 
   PomodoroSettings, 
@@ -27,6 +28,23 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
   onClose,
   compact = false,
 }) => {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
+  // Theme-aware styles aligned with app design system
+  const s = {
+    panel:     isDark ? 'bg-[#16162a]'            : 'bg-white',
+    card:      isDark ? 'bg-white/[0.04]'           : 'bg-gray-50',
+    cardAlt:   isDark ? 'bg-white/[0.06]'           : 'bg-gray-100',
+    border:    isDark ? 'border-white/[0.06]'       : 'border-gray-200',
+    text:      isDark ? 'text-slate-100'             : 'text-gray-900',
+    textMuted: isDark ? 'text-slate-400'             : 'text-gray-500',
+    textDim:   isDark ? 'text-slate-500'             : 'text-gray-400',
+    hover:     isDark ? 'hover:bg-white/[0.06]'     : 'hover:bg-gray-100',
+    btn:       isDark ? 'bg-white/[0.06] hover:bg-white/[0.10]' : 'bg-gray-100 hover:bg-gray-200',
+    input:     isDark ? 'bg-white/[0.05] border-white/[0.08]'  : 'bg-gray-50 border-gray-200',
+    divider:   isDark ? 'bg-white/[0.06]'           : 'bg-gray-200',
+  };
   // Timer state
   const [timerState, setTimerState] = useState<TimerState>({
     ...INITIAL_TIMER_STATE,
@@ -85,20 +103,20 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
   // Get mode color
   const getModeColor = (): string => {
     switch (timerState.mode) {
-      case 'work': return 'text-red-500';
-      case 'shortBreak': return 'text-green-500';
+      case 'work': return 'text-violet-500';
+      case 'shortBreak': return 'text-emerald-500';
       case 'longBreak': return 'text-blue-500';
-      default: return 'text-gray-500';
+      default: return isDark ? 'text-slate-400' : 'text-gray-400';
     }
   };
 
   // Get mode background
   const getModeBgColor = (): string => {
     switch (timerState.mode) {
-      case 'work': return 'bg-red-500';
-      case 'shortBreak': return 'bg-green-500';
+      case 'work': return 'bg-violet-500';
+      case 'shortBreak': return 'bg-emerald-500';
       case 'longBreak': return 'bg-blue-500';
-      default: return 'bg-gray-500';
+      default: return isDark ? 'bg-slate-500' : 'bg-gray-400';
     }
   };
 
@@ -388,7 +406,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
   // Render compact version for floating timer
   if (compact) {
     return (
-      <div className="flex items-center gap-3 bg-slate-800 rounded-lg px-4 py-2 shadow-lg">
+      <div className={`flex items-center gap-3 ${s.panel} rounded-lg px-4 py-2`}>
         <div className={`text-2xl font-mono font-bold ${getModeColor()}`}>
           {formatTime(timerState.timeRemaining)}
         </div>
@@ -396,27 +414,27 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
           {!timerState.isRunning ? (
             <button
               onClick={startTimer}
-              className="p-1.5 rounded-full bg-green-600 hover:bg-green-500 text-white"
+              className="p-1.5 rounded-full bg-violet-600 hover:bg-violet-500 text-white transition-colors"
             >
               <Play size={16} />
             </button>
           ) : (
             <button
               onClick={pauseTimer}
-              className="p-1.5 rounded-full bg-yellow-600 hover:bg-yellow-500 text-white"
+              className="p-1.5 rounded-full bg-amber-500 hover:bg-amber-400 text-white transition-colors"
             >
               <Pause size={16} />
             </button>
           )}
           <button
             onClick={resetTimer}
-            className="p-1.5 rounded-full bg-slate-600 hover:bg-slate-500 text-white"
+            className={`p-1.5 rounded-full ${s.btn} ${s.textMuted} transition-colors`}
           >
             <RotateCcw size={16} />
           </button>
         </div>
         {taskTitle && (
-          <div className="text-sm text-slate-400 truncate max-w-32">
+          <div className={`text-sm ${s.textMuted} truncate max-w-32`}>
             {taskTitle}
           </div>
         )}
@@ -426,23 +444,23 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
 
   // Full timer UI
   return (
-    <div className="bg-slate-800 rounded-xl p-6 shadow-xl max-w-sm mx-auto">
+    <div className={`${s.panel} rounded-xl p-6 shadow-xl max-w-sm mx-auto`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+        <h2 className={`text-xl font-semibold ${s.text} flex items-center gap-2`}>
           {timerState.mode === 'work' ? <Brain size={24} /> : <Coffee size={24} />}
           {getModeLabel()}
         </h2>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSettings(prev => ({ ...prev, soundEnabled: !prev.soundEnabled }))}
-            className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300"
+            className={`p-2 rounded-lg ${s.btn} ${s.textMuted} transition-colors`}
           >
             {settings.soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300"
+            className={`p-2 rounded-lg ${s.btn} ${s.textMuted} transition-colors`}
           >
             <Settings size={18} />
           </button>
@@ -451,13 +469,12 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
 
       {/* Task info */}
       {taskTitle && (
-        <div className="mb-4 px-3 py-2 bg-slate-700/50 rounded-lg">
-          <p className="text-sm text-slate-400">Working on:</p>
-          <p className="text-white font-medium truncate">{taskTitle}</p>
+        <div className={`mb-4 px-3 py-2 ${s.card} rounded-lg border ${s.border}`}>
+          <p className={`text-sm ${s.textMuted}`}>Working on:</p>
+          <p className={`${s.text} font-medium truncate`}>{taskTitle}</p>
         </div>
       )}
 
-      {/* Timer display - circular progress will be added in 6.3 */}
       <div className="flex flex-col items-center mb-6">
         <div className="relative w-48 h-48 flex items-center justify-center">
           {/* Circular progress indicator */}
@@ -470,7 +487,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
               fill="none"
               stroke="currentColor"
               strokeWidth="6"
-              className="text-slate-700"
+              className={isDark ? 'text-white/[0.06]' : 'text-gray-200'}
             />
             {/* Progress circle */}
             <circle
@@ -481,7 +498,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
               stroke="currentColor"
               strokeWidth="6"
               strokeLinecap="round"
-              className={timerState.mode === 'work' ? 'text-red-500' : timerState.mode === 'shortBreak' ? 'text-green-500' : 'text-blue-500'}
+              className={timerState.mode === 'work' ? 'text-violet-500' : timerState.mode === 'shortBreak' ? 'text-emerald-500' : 'text-blue-500'}
               strokeDasharray={`${2 * Math.PI * 45}`}
               strokeDashoffset={`${2 * Math.PI * 45 * (1 - getProgress() / 100)}`}
               style={{ transition: 'stroke-dashoffset 0.5s ease' }}
@@ -493,21 +510,20 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
               {formatTime(timerState.timeRemaining)}
             </div>
             {timerState.isPaused && (
-              <div className="text-yellow-500 text-sm mt-1 animate-pulse">Paused</div>
+              <div className="text-amber-500 text-sm mt-1 animate-pulse">Paused</div>
             )}
           </div>
         </div>
-        <p className="text-slate-400 text-sm mt-2">
+        <p className={`${s.textMuted} text-sm mt-2`}>
           Session {sessionCount + 1} of {settings.sessionsUntilLongBreak}
         </p>
       </div>
 
-      {/* Control buttons - will be enhanced in 6.4 */}
       <div className="flex items-center justify-center gap-3 mb-6">
         {!timerState.isRunning ? (
           <button
             onClick={startTimer}
-            className="flex items-center gap-2 px-8 py-3 rounded-full bg-green-600 hover:bg-green-500 text-white font-medium transition-all shadow-lg shadow-green-600/30"
+            className="flex items-center gap-2 px-8 py-3 rounded-full bg-violet-600 hover:bg-violet-500 text-white font-medium transition-all shadow-lg shadow-violet-600/20"
           >
             <Play size={20} />
             Start
@@ -515,7 +531,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
         ) : (
           <button
             onClick={pauseTimer}
-            className="flex items-center gap-2 px-8 py-3 rounded-full bg-amber-500 hover:bg-amber-400 text-white font-medium transition-all shadow-lg shadow-amber-500/30"
+            className="flex items-center gap-2 px-8 py-3 rounded-full bg-amber-500 hover:bg-amber-400 text-white font-medium transition-all shadow-lg shadow-amber-500/20"
           >
             <Pause size={20} />
             Pause
@@ -523,14 +539,14 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
         )}
         <button
           onClick={resetTimer}
-          className="p-3 rounded-full bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+          className={`p-3 rounded-full ${s.btn} ${s.textMuted} transition-colors`}
           title="Reset"
         >
           <RotateCcw size={20} />
         </button>
         <button
           onClick={skipSession}
-          className="p-3 rounded-full bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+          className={`p-3 rounded-full ${s.btn} ${s.textMuted} transition-colors`}
           title="Skip to next"
         >
           <SkipForward size={20} />
@@ -542,7 +558,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
         <div className="flex items-center justify-center gap-3 mb-6">
           <button
             onClick={completeTask}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-all text-sm"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-all text-sm shadow-lg shadow-emerald-600/20"
           >
             <CheckCircle2 size={16} />
             Complete Task
@@ -553,7 +569,7 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
                 resetTimer();
                 onNextTask();
               }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-all text-sm"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium transition-all text-sm shadow-lg shadow-violet-600/20"
             >
               <ChevronRight size={16} />
               Next Task
@@ -563,27 +579,27 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
       )}
 
       {/* Session stats */}
-      <div className="flex items-center justify-center gap-6 text-sm text-slate-400">
+      <div className={`flex items-center justify-center gap-6 text-sm ${s.textMuted}`}>
         <div className="text-center">
-          <p className="text-2xl font-bold text-white">{todaySessionCount}</p>
+          <p className={`text-2xl font-bold ${s.text}`}>{todaySessionCount}</p>
           <p>Today</p>
         </div>
-        <div className="w-px h-8 bg-slate-600" />
+        <div className={`w-px h-8 ${s.divider}`} />
         <div className="text-center">
-          <p className="text-2xl font-bold text-white">{interruptions}</p>
+          <p className={`text-2xl font-bold ${s.text}`}>{interruptions}</p>
           <p>Interruptions</p>
         </div>
       </div>
 
       {/* Settings panel */}
       {showSettings && (
-        <div className="mt-6 p-4 bg-slate-700/50 rounded-lg">
-          <h3 className="text-white font-medium mb-4">Timer Settings</h3>
+        <div className={`mt-6 p-4 ${s.card} rounded-lg border ${s.border}`}>
+          <h3 className={`${s.text} font-medium mb-4`}>Timer Settings</h3>
           
           <div className="space-y-4">
             {/* Work Duration */}
             <div className="flex items-center justify-between">
-              <label className="text-slate-300 text-sm">Work Duration</label>
+              <label className={`${s.textMuted} text-sm`}>Work Duration</label>
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -598,16 +614,16 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
                       setTimerState(prev => ({ ...prev, timeRemaining: value * 60 }));
                     }
                   }}
-                  className="w-24 accent-red-500"
+                  className="w-24 accent-violet-500"
                   disabled={timerState.isRunning}
                 />
-                <span className="text-white text-sm w-12 text-right">{settings.workDuration} min</span>
+                <span className={`${s.text} text-sm w-12 text-right`}>{settings.workDuration} min</span>
               </div>
             </div>
 
             {/* Short Break */}
             <div className="flex items-center justify-between">
-              <label className="text-slate-300 text-sm">Short Break</label>
+              <label className={`${s.textMuted} text-sm`}>Short Break</label>
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -622,16 +638,16 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
                       setTimerState(prev => ({ ...prev, timeRemaining: value * 60 }));
                     }
                   }}
-                  className="w-24 accent-green-500"
+                  className="w-24 accent-emerald-500"
                   disabled={timerState.isRunning}
                 />
-                <span className="text-white text-sm w-12 text-right">{settings.shortBreakDuration} min</span>
+                <span className={`${s.text} text-sm w-12 text-right`}>{settings.shortBreakDuration} min</span>
               </div>
             </div>
 
             {/* Long Break */}
             <div className="flex items-center justify-between">
-              <label className="text-slate-300 text-sm">Long Break</label>
+              <label className={`${s.textMuted} text-sm`}>Long Break</label>
               <div className="flex items-center gap-2">
                 <input
                   type="range"
@@ -649,31 +665,31 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
                   className="w-24 accent-blue-500"
                   disabled={timerState.isRunning}
                 />
-                <span className="text-white text-sm w-12 text-right">{settings.longBreakDuration} min</span>
+                <span className={`${s.text} text-sm w-12 text-right`}>{settings.longBreakDuration} min</span>
               </div>
             </div>
 
             {/* Sessions until long break */}
             <div className="flex items-center justify-between">
-              <label className="text-slate-300 text-sm">Sessions until long break</label>
+              <label className={`${s.textMuted} text-sm`}>Sessions until long break</label>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setSettings(prev => ({ 
                     ...prev, 
                     sessionsUntilLongBreak: Math.max(2, prev.sessionsUntilLongBreak - 1) 
                   }))}
-                  className="px-2 py-1 bg-slate-600 hover:bg-slate-500 rounded text-white text-sm"
+                  className={`px-2 py-1 ${s.btn} rounded ${s.text} text-sm transition-colors`}
                   disabled={timerState.isRunning}
                 >
                   -
                 </button>
-                <span className="text-white text-sm w-6 text-center">{settings.sessionsUntilLongBreak}</span>
+                <span className={`${s.text} text-sm w-6 text-center`}>{settings.sessionsUntilLongBreak}</span>
                 <button
                   onClick={() => setSettings(prev => ({ 
                     ...prev, 
                     sessionsUntilLongBreak: Math.min(8, prev.sessionsUntilLongBreak + 1) 
                   }))}
-                  className="px-2 py-1 bg-slate-600 hover:bg-slate-500 rounded text-white text-sm"
+                  className={`px-2 py-1 ${s.btn} rounded ${s.text} text-sm transition-colors`}
                   disabled={timerState.isRunning}
                 >
                   +
@@ -682,27 +698,27 @@ const PomodoroTimer: React.FC<PomodoroTimerProps> = ({
             </div>
 
             {/* Auto-start options */}
-            <div className="pt-2 border-t border-slate-600 space-y-2">
+            <div className={`pt-2 border-t ${s.border} space-y-2`}>
               <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-slate-300 text-sm">Auto-start breaks</span>
+                <span className={`${s.textMuted} text-sm`}>Auto-start breaks</span>
                 <input
                   type="checkbox"
                   checked={settings.autoStartBreaks}
                   onChange={(e) => setSettings(prev => ({ ...prev, autoStartBreaks: e.target.checked }))}
-                  className="w-4 h-4 accent-green-500"
+                  className="w-4 h-4 accent-emerald-500"
                 />
               </label>
               <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-slate-300 text-sm">Auto-start pomodoros</span>
+                <span className={`${s.textMuted} text-sm`}>Auto-start pomodoros</span>
                 <input
                   type="checkbox"
                   checked={settings.autoStartPomodoros}
                   onChange={(e) => setSettings(prev => ({ ...prev, autoStartPomodoros: e.target.checked }))}
-                  className="w-4 h-4 accent-red-500"
+                  className="w-4 h-4 accent-violet-500"
                 />
               </label>
               <label className="flex items-center justify-between cursor-pointer">
-                <span className="text-slate-300 text-sm">Desktop notifications</span>
+                <span className={`${s.textMuted} text-sm`}>Desktop notifications</span>
                 <input
                   type="checkbox"
                   checked={settings.notificationsEnabled}
