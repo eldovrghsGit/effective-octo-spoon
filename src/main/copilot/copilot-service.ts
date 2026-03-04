@@ -81,26 +81,33 @@ function getAppTools() {
         limit: z.number().optional().describe('Max results to return. Default 50.'),
       }),
       handler: async ({ status, priority, moscow, limit }) => {
-        let sql = 'SELECT * FROM tasks WHERE 1=1';
-        const params: any[] = [];
+        console.log('🔧 Tool: get_tasks called with', { status, priority, moscow, limit });
+        try {
+          let sql = 'SELECT * FROM tasks WHERE 1=1';
+          const params: any[] = [];
 
-        if (status && status !== 'all') {
-          sql += ' AND status = ?';
-          params.push(status);
-        }
-        if (priority && priority !== 'all') {
-          sql += ' AND priority = ?';
-          params.push(priority);
-        }
-        if (moscow && moscow !== 'all') {
-          sql += ' AND moscow = ?';
-          params.push(moscow);
-        }
-        sql += ' ORDER BY created_at DESC LIMIT ?';
-        params.push(limit ?? 50);
+          if (status && status !== 'all') {
+            sql += ' AND status = ?';
+            params.push(status);
+          }
+          if (priority && priority !== 'all') {
+            sql += ' AND priority = ?';
+            params.push(priority);
+          }
+          if (moscow && moscow !== 'all') {
+            sql += ' AND moscow = ?';
+            params.push(moscow);
+          }
+          sql += ' ORDER BY created_at DESC LIMIT ?';
+          params.push(limit ?? 50);
 
-        const rows = db!.prepare(sql).all(...params);
-        return JSON.stringify(rows, null, 2);
+          const rows = db!.prepare(sql).all(...params);
+          console.log('🔧 Tool: get_tasks returned', rows.length, 'rows');
+          return JSON.stringify(rows, null, 2);
+        } catch (err) {
+          console.error('🔧 Tool: get_tasks ERROR:', err);
+          return JSON.stringify({ error: String(err) });
+        }
       },
     }),
 
@@ -512,6 +519,11 @@ export async function initCopilot(
       systemMessage: {
         content: getSystemMessage(),
       },
+      // Auto-approve all tool permission requests — our tools are local DB queries
+      onPermissionRequest: (request: any) => {
+        console.log('🔐 Permission request:', request.kind, request.toolCallId);
+        return { kind: 'approved' };
+      },
     };
 
     // Custom provider (BYOK)
@@ -562,19 +574,24 @@ export async function sendMessage(
 
   let fullResponse = '';
 
-  // Set up streaming listener
+  // Set up streaming listener — log ALL events for debugging
   const unsub = session.on((event: any) => {
-    if (event.type === 'assistant.message_delta') {
+    const t = event.type || event?.event || 'unknown';
+    if (t === 'assistant.message_delta') {
       const delta = event.data?.deltaContent ?? '';
       if (delta) {
         fullResponse += delta;
         onDelta?.(delta);
       }
+    } else {
+      console.log('🔔 Copilot event:', t, JSON.stringify(event.data ?? event).substring(0, 300));
     }
   });
 
   try {
+    console.log('📤 Calling session.sendAndWait...');
     const result = await session.sendAndWait({ prompt }, 120_000);
+    console.log('📥 sendAndWait result type:', result?.type, 'has content:', !!(result?.data?.content));
 
     // If sendAndWait returned a complete message and we didn't stream, use it
     if (result?.data?.content && !fullResponse) {
@@ -582,6 +599,9 @@ export async function sendMessage(
     }
 
     return fullResponse || result?.data?.content || 'No response received.';
+  } catch (err) {
+    console.error('❌ sendAndWait error:', err);
+    throw err;
   } finally {
     unsub();
   }
